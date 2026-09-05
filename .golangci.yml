@@ -1,0 +1,34 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - gocritic
+    - makezero
+    - nilerr
+    - nilnesserr
+    - nolintlint
+    - unconvert
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - bomber-cli
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -13,8 +13,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"bomber-cli/internal/room"
 	gossh "golang.org/x/crypto/ssh"
+
+	"bomber-cli/internal/room"
 )
 
 type capture struct {
@@ -37,7 +38,7 @@ func TestMalformedSessionRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	for _, payload := range [][]byte{
 		nil,
 		ptyPayload(10001, 24, "\x00"),
@@ -71,7 +72,7 @@ func TestMalformedSessionRequests(t *testing.T) {
 func TestConnectionCloseStopsTimer(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		a, b := net.Pipe()
-		defer b.Close()
+		defer func() { _ = b.Close() }()
 		h := &Host{conns: make(map[*connection]struct{})}
 		c := &connection{Conn: a, host: h}
 		h.conns[c] = struct{}{}
@@ -80,7 +81,7 @@ func TestConnectionCloseStopsTimer(t *testing.T) {
 		if err := c.Close(); err != nil {
 			t.Fatal(err)
 		}
-		c.Close()
+		_ = c.Close()
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
 		if fired || len(h.conns) != 0 {
@@ -97,7 +98,9 @@ func FuzzPTYValidation(f *testing.F) {
 }
 
 func (c *capture) Write(p []byte) (int, error) { c.mu.Lock(); defer c.mu.Unlock(); return c.b.Write(p) }
-func (c *capture) text() string                { c.mu.Lock(); defer c.mu.Unlock(); return c.b.String() }
+
+func (c *capture) text() string { c.mu.Lock(); defer c.mu.Unlock(); return c.b.String() }
+
 func eventually(t *testing.T, fn func() bool) {
 	t.Helper()
 	end := time.Now().Add(5 * time.Second)
@@ -109,6 +112,7 @@ func eventually(t *testing.T, fn func() bool) {
 	}
 	t.Fatal("condition not met within 5s")
 }
+
 func start(t *testing.T, cfg Config) (*Host, string) {
 	t.Helper()
 	h, err := New(cfg)
@@ -141,27 +145,30 @@ func serveHost(t *testing.T, h *Host) (*Host, string) {
 	})
 	return h, l.Addr().String()
 }
+
 func config(t *testing.T) Config {
 	c := DefaultConfig()
 	c.HostKey = filepath.Join(t.TempDir(), "keys", "host")
 	return c
 }
+
 func dial(t *testing.T, addr, name string) *gossh.Client {
 	t.Helper()
 	c, err := gossh.Dial("tcp", addr, &gossh.ClientConfig{User: name, HostKeyCallback: gossh.InsecureIgnoreHostKey(), Timeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
+
 func shell(t *testing.T, c *gossh.Client) (*gossh.Session, io.WriteCloser, *capture) {
 	t.Helper()
 	s, err := c.NewSession()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	out := &capture{}
 	s.Stdout = out
 	s.Stderr = out
@@ -178,6 +185,7 @@ func shell(t *testing.T, c *gossh.Client) (*gossh.Session, io.WriteCloser, *capt
 	eventually(t, func() bool { return strings.Contains(out.text(), "LOBBY") })
 	return s, in, out
 }
+
 func TestRealSSHMultiplayerResizeAndDisconnect(t *testing.T) {
 	h, addr := start(t, config(t))
 	a := dial(t, addr, "alice")
@@ -187,12 +195,20 @@ func TestRealSSHMultiplayerResizeAndDisconnect(t *testing.T) {
 	if !strings.Contains(ob.text(), "alice-2") {
 		t.Fatal("duplicate name not disambiguated")
 	}
-	io.WriteString(ia, "\r")
+	if _, err := io.WriteString(ia, "\r"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return len(h.Hub.List()) == 1 && h.Hub.List()[0].Count == 1 })
-	io.WriteString(ib, "\r")
+	if _, err := io.WriteString(ib, "\r"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return h.Hub.List()[0].Count == 2 })
-	io.WriteString(ia, "\r")
-	io.WriteString(ib, "\r")
+	if _, err := io.WriteString(ia, "\r"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(ib, "\r"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return h.Hub.List()[0].Phase == room.Countdown })
 	eventually(t, func() bool { return h.Hub.List()[0].Phase == room.Playing })
 	eventually(t, func() bool { return strings.Contains(oa.text(), "P1") && strings.Contains(ob.text(), "P2") })
@@ -201,29 +217,14 @@ func TestRealSSHMultiplayerResizeAndDisconnect(t *testing.T) {
 	// renderer accidentally.
 	clearedArenaRow := strings.Repeat("\x1b[34m##\x1b[0m", 15) + "\x1b[K"
 	eventually(t, func() bool { return strings.Contains(oa.text(), clearedArenaRow) })
-	// Measure real keypress-to-render latency on the guaranteed clear spawn
-	// exit. Alternate back to the spawn so the rest of the match test is stable.
-	var totalLatency, worstLatency time.Duration
-	for move := 0; move < 8; move++ {
-		time.Sleep(110 * time.Millisecond)
-		key, prefix := "d", "\x1b[34m##\x1b[0m\x1b[37m  \x1b[0m\x1b[36mP1"
-		if move%2 == 1 {
-			key, prefix = "a", "\x1b[34m##\x1b[0m\x1b[36mP1"
-		}
-		offset := len(oa.text())
-		pressed := time.Now()
-		io.WriteString(ia, key)
-		eventually(t, func() bool { return strings.Contains(oa.text()[offset:], prefix) })
-		latency := time.Since(pressed)
-		totalLatency += latency
-		worstLatency = max(worstLatency, latency)
-	}
-	t.Logf("SSH movement keypress-to-render: mean %s, worst %s (8 moves)", totalLatency/8, worstLatency)
+	measureMovementRenderLatency(t, ia, oa)
 	if err := sa.WindowChange(15, 40); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, func() bool { return strings.Contains(oa.text(), "Resize terminal") })
-	io.WriteString(ia, " d")
+	if _, err := io.WriteString(ia, " d"); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(150 * time.Millisecond)
 	snap := h.Hub.List()[0]
 	if snap.Game.BombCount != 0 || snap.Game.Players[0].Pos.X != 1 {
@@ -233,17 +234,23 @@ func TestRealSSHMultiplayerResizeAndDisconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(150 * time.Millisecond)
-	io.WriteString(ia, " ")
+	if _, err := io.WriteString(ia, " "); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return h.Hub.List()[0].Game.BombCount == 1 })
-	b.Close()
+	_ = b.Close()
 	eventually(t, func() bool { return h.Hub.List()[0].Phase == room.Result })
 	snap = h.Hub.List()[0]
 	if snap.Members[0].Score != 1 {
 		t.Fatal("disconnect did not produce winner")
 	}
-	io.WriteString(ia, "\x1b")
+	if _, err := io.WriteString(ia, "\x1b"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return len(h.Hub.List()) == 0 })
-	io.WriteString(ia, "\x03")
+	if _, err := io.WriteString(ia, "\x03"); err != nil {
+		t.Fatal(err)
+	}
 	finished := make(chan error, 1)
 	go func() { finished <- sa.Wait() }()
 	select {
@@ -252,12 +259,40 @@ func TestRealSSHMultiplayerResizeAndDisconnect(t *testing.T) {
 		t.Fatal("Ctrl-C failed to disconnect")
 	}
 }
+
+func measureMovementRenderLatency(t *testing.T, input io.Writer, output *capture) {
+	t.Helper()
+	// Measure real keypress-to-render latency on the guaranteed clear spawn
+	// exit. Alternate back to the spawn so the rest of the match test is stable.
+	var totalLatency, worstLatency time.Duration
+	for move := range 8 {
+		time.Sleep(110 * time.Millisecond)
+		key, prefix := "d", "\x1b[34m##\x1b[0m\x1b[37m  \x1b[0m\x1b[36mP1"
+		if move%2 == 1 {
+			key, prefix = "a", "\x1b[34m##\x1b[0m\x1b[36mP1"
+		}
+		offset := len(output.text())
+		pressed := time.Now()
+		if _, err := io.WriteString(input, key); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool { return strings.Contains(output.text()[offset:], prefix) })
+		latency := time.Since(pressed)
+		totalLatency += latency
+		worstLatency = max(worstLatency, latency)
+	}
+	t.Logf("SSH movement keypress-to-render: mean %s, worst %s (8 moves)", totalLatency/8, worstLatency)
+}
+
 func TestDeniedCapabilities(t *testing.T) {
 	_, addr := start(t, config(t))
 	t.Run("no PTY", func(t *testing.T) {
 		c := dial(t, addr, "no-pty")
-		s, _ := c.NewSession()
-		defer s.Close()
+		s, err := c.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = s.Close() }()
 		if s.Shell() == nil {
 			t.Fatal("shell without PTY accepted")
 		}
@@ -269,7 +304,7 @@ func TestDeniedCapabilities(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer s.Close()
+			defer func() { _ = s.Close() }()
 			if err = s.RequestPty("xterm", 24, 60, nil); err != nil {
 				t.Fatal(err)
 			}
@@ -295,23 +330,24 @@ func TestDeniedCapabilities(t *testing.T) {
 	}
 	c := dial(t, addr, "forward")
 	if ch, err := c.Dial("tcp", "127.0.0.1:22"); err == nil {
-		ch.Close()
+		_ = ch.Close()
 		t.Fatal("local forwarding accepted")
 	}
 	if l, err := c.Listen("tcp", "127.0.0.1:0"); err == nil {
-		l.Close()
+		_ = l.Close()
 		t.Fatal("reverse forwarding accepted")
 	}
 	s, err := c.NewSession()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if s2, err := c.NewSession(); err == nil {
-		s2.Close()
+		_ = s2.Close()
 		t.Fatal("second channel accepted")
 	}
 }
+
 func TestHostKeyPersistencePermissionsAndLimits(t *testing.T) {
 	cfg := config(t)
 	cfg.MaxSessions = 1
@@ -321,7 +357,10 @@ func TestHostKeyPersistencePermissionsAndLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, _ := os.Stat(cfg.HostKey)
+	info, err := os.Stat(cfg.HostKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatal("key permissions")
 	}
@@ -333,17 +372,18 @@ func TestHostKeyPersistencePermissionsAndLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	eventually(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.conns) == 1 })
 	blocked, err := gossh.Dial("tcp", addr, &gossh.ClientConfig{User: "extra", HostKeyCallback: gossh.InsecureIgnoreHostKey(), Timeout: time.Second})
 	if err == nil {
-		blocked.Close()
+		_ = blocked.Close()
 		t.Fatal("connection limit ignored")
 	}
 	eventually(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.conns) == 0 })
 	c := dial(t, addr, "after-timeout")
 	shell(t, c)
 }
+
 func TestInvalidConfigAndHostKey(t *testing.T) {
 	cfg := config(t)
 	cfg.MaxRooms = 0
@@ -368,7 +408,7 @@ func TestResizeBeforeShellAndFlood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	out := &capture{}
 	s.Stdout = out
 	s.Stderr = out
@@ -376,7 +416,7 @@ func TestResizeBeforeShellAndFlood(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A resize before shell must not block shell startup.
-	for n := 0; n < 100; n++ {
+	for range 100 {
 		if err = s.WindowChange(15, 40); err != nil {
 			t.Fatal(err)
 		}
@@ -385,13 +425,13 @@ func TestResizeBeforeShellAndFlood(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, func() bool { return strings.Contains(out.text(), "Resize terminal") })
-	for n := 0; n < 100; n++ {
+	for range 100 {
 		if err = s.WindowChange(24, 60); err != nil {
 			t.Fatal(err)
 		}
 	}
 	eventually(t, func() bool { return strings.Contains(out.text(), "LOBBY") })
-	c.Close()
+	_ = c.Close()
 	eventually(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.conns) == 0 })
 }
 
@@ -399,10 +439,12 @@ func TestChannelCloseDisconnectsPlayer(t *testing.T) {
 	h, addr := start(t, config(t))
 	c := dial(t, addr, "channel-close")
 	s, in, _ := shell(t, c)
-	io.WriteString(in, "\r")
+	if _, err := io.WriteString(in, "\r"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return len(h.Hub.List()) == 1 })
 	// Closing only the SSH channel must release the player even if its transport
 	// remains open. Some multiplexing SSH clients keep the transport alive.
-	s.Close()
+	_ = s.Close()
 	eventually(t, func() bool { return len(h.Hub.List()) == 0 })
 }

@@ -115,7 +115,7 @@ Use `./scripts/dev.sh` for repeatable checks and managed test sessions (Python
 3.9+, Go, and OpenSSH required on macOS or Linux):
 
 ```sh
-./scripts/dev.sh test            # go test -race, go vet, and a test build
+./scripts/dev.sh test            # lint, go test -race, go vet, and a test build
 ./scripts/dev.sh smoke           # real SSH UI/exit check; cleans up its server
 ./scripts/dev.sh latency         # measure real SSH keypress-to-render latency
 ./scripts/dev.sh stress          # repeat race-enabled churn and lifecycle tests
@@ -137,6 +137,7 @@ Untracked SSH clients are disconnected when their managed server is stopped.
 ## Verification and architecture
 
 ```sh
+golangci-lint run ./...
 go test -race ./...
 go vet ./...
 go build -o bin/bomber-cli ./cmd/bomber-cli

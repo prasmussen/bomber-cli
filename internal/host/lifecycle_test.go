@@ -13,9 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"bomber-cli/internal/room"
 	ssh "github.com/charmbracelet/ssh"
 	gossh "golang.org/x/crypto/ssh"
+
+	"bomber-cli/internal/room"
 )
 
 func connectionCount(h *Host) int {
@@ -37,18 +38,18 @@ func connectLoadClient(addr string, n int) (*loadClient, error) {
 	}
 	// Bound every stage, including SSH handshake, shell startup and writes.
 	if err := raw.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
-		raw.Close()
+		_ = raw.Close()
 		return nil, err
 	}
 	conn, chans, reqs, err := gossh.NewClientConn(raw, addr, &gossh.ClientConfig{
 		User: fmt.Sprintf("load-%d", n), HostKeyCallback: gossh.InsecureIgnoreHostKey(),
 	})
 	if err != nil {
-		raw.Close()
+		_ = raw.Close()
 		return nil, err
 	}
 	c := gossh.NewClient(conn, chans, reqs)
-	fail := func(err error) (*loadClient, error) { c.Close(); return nil, err }
+	fail := func(err error) (*loadClient, error) { _ = c.Close(); return nil, err }
 	s, err := c.NewSession()
 	if err != nil {
 		return fail(err)
@@ -74,7 +75,7 @@ func churnWave(t *testing.T, h *Host, addr string, count int) {
 	defer func() {
 		for _, c := range clients {
 			if c != nil {
-				c.client.Close()
+				_ = c.client.Close()
 			}
 		}
 	}()
@@ -104,7 +105,7 @@ func churnWave(t *testing.T, h *Host, addr string, count int) {
 		t.Fatal("connection accounting mismatch")
 	}
 	if extra, err := connectLoadClient(addr, count); err == nil {
-		extra.client.Close()
+		_ = extra.client.Close()
 		t.Fatal("full server accepted extra connection")
 	}
 	for i, c := range clients {
@@ -132,9 +133,9 @@ func churnWave(t *testing.T, h *Host, addr string, count int) {
 	for i, c := range clients {
 		wg.Go(func() {
 			if i%2 == 0 {
-				c.session.Close()
+				_ = c.session.Close()
 			} else {
-				c.client.Close()
+				_ = c.client.Close()
 			}
 		})
 	}
@@ -233,20 +234,30 @@ func TestSSHShutdownWithSlowClientAndActiveMatch(t *testing.T) {
 	eventually(t, func() bool { return len(h.Hub.List()) == 1 })
 	fast := dial(t, addr, "fast")
 	_, fastInput, fastOutput := shell(t, fast)
-	io.WriteString(fastInput, "\r")
+	if _, err := io.WriteString(fastInput, "\r"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { rs := h.Hub.List(); return len(rs) == 1 && rs[0].Count == 2 })
-	io.WriteString(slowInput, "\r")
-	io.WriteString(fastInput, "\r")
+	if _, err := io.WriteString(slowInput, "\r"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(fastInput, "\r"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return h.Hub.List()[0].Phase == room.Playing })
 	slow.stall.Store(true)
-	io.WriteString(fastInput, " ")
+	if _, err := io.WriteString(fastInput, " "); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return h.Hub.List()[0].Game.BombCount == 1 })
 	select {
 	case <-slow.blocked:
 	case <-time.After(3 * time.Second):
 		t.Fatal("failed to block SSH output")
 	}
-	io.WriteString(fastInput, "a")
+	if _, err := io.WriteString(fastInput, "a"); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return h.Hub.List()[0].Game.Players[1].Pos.X == 12 })
 	eventually(t, func() bool { return strings.Contains(fastOutput.text(), "PLAYING") })
 	// Also leave an uncompleted SSH handshake open during shutdown.
@@ -254,7 +265,7 @@ func TestSSHShutdownWithSlowClientAndActiveMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	eventually(t, func() bool { return connectionCount(h) == 3 })
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -285,9 +296,11 @@ func TestSSHHandshakeChurnAndShutdown(t *testing.T) {
 		}
 		eventually(t, func() bool { return connectionCount(h) == cfg.MaxSessions })
 		for _, c := range clients {
-			_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
 			_, err := io.Copy(io.Discard, c)
-			c.Close()
+			_ = c.Close()
 			if err != nil {
 				t.Fatal("handshake did not close before read deadline:", err)
 			}

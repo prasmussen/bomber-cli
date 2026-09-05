@@ -97,7 +97,13 @@ def build():
     run("go", "build", "-o", str(BINARY), "./cmd/bomber-cli")
 
 
+def lint():
+    run("go", "fix", "./...")
+    run("golangci-lint", "run", "./...")
+
+
 def test():
+    lint()
     run("go", "test", "-race", "./...")
     run("go", "vet", "./...")
     build()
@@ -111,11 +117,7 @@ def start():
             print("Test server already running (PID %d, port %d)." % (record["pid"], PORT))
             return False
         path.unlink(missing_ok=True)
-        with socket.socket() as probe:
-            try:
-                probe.bind(ADDRESS)
-            except OSError as err:
-                raise RuntimeError("Port %d is in use; refusing to stop an untracked server." % PORT) from err
+        require_available_test_port()
         build()
         with (STATE / "server.log").open("wb") as log:
             process = subprocess.Popen(
@@ -126,24 +128,41 @@ def start():
             )
         try:
             remember(process, "server")
-            for _ in range(100):
-                if process.poll() is not None:
-                    raise RuntimeError("Server exited; see " + str(STATE / "server.log"))
-                if "INFO listening" in (STATE / "server.log").read_text():
-                    print("Test server started (PID %d): ssh on 127.0.0.1:%d" % (process.pid, PORT))
-                    print("Log: " + str(STATE / "server.log"))
-                    return True
-                time.sleep(0.05)
-            raise RuntimeError("Server did not become ready within 5 seconds")
+            wait_for_server_start(process)
+            print("Test server started (PID %d): ssh on 127.0.0.1:%d" % (process.pid, PORT))
+            print("Log: " + str(STATE / "server.log"))
+            return True
         except BaseException:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            terminate_child_process(process)
             path.unlink(missing_ok=True)
             raise
+
+
+def require_available_test_port():
+    with socket.socket() as probe:
+        try:
+            probe.bind(ADDRESS)
+        except OSError as err:
+            raise RuntimeError("Port %d is in use; refusing to stop an untracked server." % PORT) from err
+
+
+def wait_for_server_start(process):
+    for _ in range(100):
+        if process.poll() is not None:
+            raise RuntimeError("Server exited; see " + str(STATE / "server.log"))
+        if "INFO listening" in (STATE / "server.log").read_text():
+            return
+        time.sleep(0.05)
+    raise RuntimeError("Server did not become ready within 5 seconds")
+
+
+def terminate_child_process(process):
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 
 
 def ssh_command(name):
@@ -176,25 +195,8 @@ def connect(name, smoke=False):
             raise
     try:
         if smoke:
-            transcript = b""
-            deadline = time.monotonic() + 15
-            while time.monotonic() < deadline:
-                readable, _, _ = select.select([process.stdout], [], [], 0.2)
-                if readable:
-                    chunk = os.read(process.stdout.fileno(), 65536)
-                    if not chunk:
-                        break
-                    transcript += chunk
-                    # With no local PTY, SSH requests a zero-size terminal. Both
-                    # screens prove the real interactive SSH app was reached.
-                    if b"LOBBY" in transcript or b"Resize terminal" in transcript:
-                        process.stdin.write(b"\x03")
-                        process.stdin.flush()
-                        if process.wait(timeout=5) != 0:
-                            raise RuntimeError("SSH smoke session exited unsuccessfully")
-                        print("SSH smoke check passed; Ctrl-C closed the session.")
-                        return
-            raise RuntimeError("SSH smoke check did not reach the UI:\n" + transcript.decode(errors="replace"))
+            verify_ssh_smoke_session(process)
+            return
         status = process.wait()
         if status not in (0, -signal.SIGTERM):
             # OpenSSH handles SIGTERM itself and commonly exits 255. Cleanup
@@ -210,6 +212,28 @@ def connect(name, smoke=False):
                 terminate(record)
             process.wait()
             path.unlink(missing_ok=True)
+
+
+def verify_ssh_smoke_session(process):
+    transcript = b""
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([process.stdout], [], [], 0.2)
+        if readable:
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            transcript += chunk
+            # With no local PTY, SSH requests a zero-size terminal. Both
+            # screens prove the real interactive SSH app was reached.
+            if b"LOBBY" in transcript or b"Resize terminal" in transcript:
+                process.stdin.write(b"\x03")
+                process.stdin.flush()
+                if process.wait(timeout=5) != 0:
+                    raise RuntimeError("SSH smoke session exited unsuccessfully")
+                print("SSH smoke check passed; Ctrl-C closed the session.")
+                return
+    raise RuntimeError("SSH smoke check did not reach the UI:\n" + transcript.decode(errors="replace"))
 
 
 def stop(sessions_only=False):
@@ -245,7 +269,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     for command, help_text in (
-        ("test", "race tests, vet, and build"), ("build", "build private test executable"),
+        ("lint", "apply go fix and run golangci-lint"),
+        ("test", "lint, race tests, vet, and build"), ("build", "build private test executable"),
         ("start", "build and start test server on loopback port 23230"),
         ("status", "show tracked process status"),
         ("latency", "measure keypress-to-render latency through real SSH"),
@@ -278,7 +303,7 @@ def main():
             if created:
                 stop()
     else:
-        {"test": test, "build": build, "start": start, "stop": stop, "status": status}[args.command]()
+        {"lint": lint, "test": test, "build": build, "start": start, "stop": stop, "status": status}[args.command]()
 
 
 if __name__ == "__main__":

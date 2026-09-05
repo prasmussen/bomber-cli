@@ -1,30 +1,66 @@
 package room
 
 import (
-	"bomber-cli/internal/game"
 	"fmt"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"bomber-cli/internal/game"
 )
 
 func newActor() *actor {
 	return &actor{snapshot: Snapshot{ID: 1, Phase: Waiting}, subscribers: make(map[uint64]chan Snapshot), seed: 42}
 }
 
+func TestRoomTransitionsPreserveTheirInput(t *testing.T) {
+	now := time.Unix(1000, 0)
+	original := Snapshot{
+		ID: 1, Phase: Countdown, Count: 2, Deadline: now.Add(time.Second),
+		Members: [game.MaxPlayers]Member{
+			{ID: 1, Name: "alice", Ready: true, Score: 3},
+			{ID: 2, Name: "bob", Ready: true},
+		},
+	}
+	before := original
+	unready := withReadinessToggled(original, 1)
+	if unready.Phase != Waiting || !unready.Deadline.IsZero() || unready.Members[1].Ready || !unready.Members[0].Ready {
+		t.Fatal("unready transition did not cancel the countdown")
+	}
+	result := resultSnapshot(original, 1, now)
+	if result.Phase != Result || result.Members[0].Score != 4 || result.Message != "alice wins!" {
+		t.Fatal("result transition did not award the winner")
+	}
+	if original != before || unready.Members[0].Score != 3 {
+		t.Fatal("room transitions changed their input or another branch")
+	}
+	joined, err := withMember(original, Member{ID: 3, Name: "charlie"})
+	if err != nil || joined.Count != 3 || original != before {
+		t.Fatal("joining did not produce an independent snapshot")
+	}
+	rejected, err := withMember(result, Member{ID: 3})
+	if err == nil || rejected != result {
+		t.Fatal("rejected join changed the result snapshot")
+	}
+}
+
 func TestCommandResolvesExpiredTimers(t *testing.T) {
 	for _, action := range []Action{Right, Bomb} {
 		t.Run(fmt.Sprint(action), func(t *testing.T) {
 			a := newActor()
-			a.membership(member(1))
-			a.membership(member(2))
+			if err := a.membership(member(1)); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.membership(member(2)); err != nil {
+				t.Fatal(err)
+			}
 			now := time.Unix(1000, 0)
 			a.snapshot.Phase = Playing
 			a.match = game.New([]uint64{1, 2}, now, 42)
 			a.match.Place(1, now)
 			a.command(command{1, action}, now.Add(2*time.Second))
-			if a.match.Players[0].Alive || a.match.Players[0].Pos != game.Spawns[0] || a.match.BombCount != 0 {
+			if a.match.Players[0].Alive || a.match.Players[0].Pos != game.Spawns()[0] || a.match.BombCount != 0 {
 				t.Fatal("input ran before overdue explosion")
 			}
 			if a.snapshot.Phase != Result || a.snapshot.Members[1].Score != 1 {
@@ -33,8 +69,12 @@ func TestCommandResolvesExpiredTimers(t *testing.T) {
 		})
 	}
 	a := newActor()
-	a.membership(member(1))
-	a.membership(member(2))
+	if err := a.membership(member(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.membership(member(2)); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Unix(1000, 0)
 	a.snapshot.Phase = Playing
 	a.match = game.New([]uint64{1, 2}, now, 42)
@@ -46,7 +86,9 @@ func TestCommandResolvesExpiredTimers(t *testing.T) {
 
 func TestInvalidCommandsDoNotChangeMembership(t *testing.T) {
 	a := newActor()
-	a.membership(member(1))
+	if err := a.membership(member(1)); err != nil {
+		t.Fatal(err)
+	}
 	before := a.snapshot
 	for _, c := range []command{{0, Ready}, {2, Ready}, {1, Action(255)}} {
 		if a.command(c, time.Now()) || a.snapshot != before {
@@ -54,9 +96,11 @@ func TestInvalidCommandsDoNotChangeMembership(t *testing.T) {
 		}
 	}
 }
+
 func member(id uint64) control {
 	return control{member: Member{ID: id, Name: "player"}, frames: make(chan Snapshot, 1)}
 }
+
 func TestReadyMembershipCountdownAndCapacity(t *testing.T) {
 	a := newActor()
 	now := time.Unix(0, 0)
@@ -86,7 +130,9 @@ func TestReadyMembershipCountdownAndCapacity(t *testing.T) {
 	}
 	c := member(4)
 	c.leave = true
-	a.membership(c)
+	if err := a.membership(c); err != nil {
+		t.Fatal(err)
+	}
 	if a.snapshot.Phase != Waiting {
 		t.Fatal("leave failed to cancel countdown")
 	}
@@ -94,7 +140,9 @@ func TestReadyMembershipCountdownAndCapacity(t *testing.T) {
 		a.command(command{id, Ready}, now)
 	}
 	a.tick(now)
-	a.membership(member(4))
+	if err := a.membership(member(4)); err != nil {
+		t.Fatal(err)
+	}
 	if a.snapshot.Phase != Waiting {
 		t.Fatal("join failed to cancel countdown")
 	}
@@ -110,11 +158,16 @@ func TestReadyMembershipCountdownAndCapacity(t *testing.T) {
 		t.Fatal("active join accepted")
 	}
 }
+
 func TestRematchScoresAndDisconnect(t *testing.T) {
 	a := newActor()
 	now := time.Unix(0, 0)
-	a.membership(member(1))
-	a.membership(member(2))
+	if err := a.membership(member(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.membership(member(2)); err != nil {
+		t.Fatal(err)
+	}
 	a.command(command{1, Ready}, now)
 	a.command(command{2, Ready}, now)
 	a.tick(now)
@@ -129,7 +182,9 @@ func TestRematchScoresAndDisconnect(t *testing.T) {
 	a.match.Place(2, now.Add(3*time.Second))
 	c := member(2)
 	c.leave = true
-	a.membership(c)
+	if err := a.membership(c); err != nil {
+		t.Fatal(err)
+	}
 	a.tick(now.Add(3050 * time.Millisecond))
 	if a.snapshot.Phase != Result || a.snapshot.Members[0].Score != 1 {
 		t.Fatal("disconnect did not award survivor")
@@ -138,7 +193,9 @@ func TestRematchScoresAndDisconnect(t *testing.T) {
 	if a.snapshot.Phase != Waiting || a.snapshot.Members[0].Ready {
 		t.Fatal("did not return to ready-up")
 	}
-	a.membership(member(3))
+	if err := a.membership(member(3)); err != nil {
+		t.Fatal(err)
+	}
 	a.command(command{1, Ready}, now)
 	a.command(command{3, Ready}, now)
 	a.tick(now.Add(7 * time.Second))
@@ -147,16 +204,21 @@ func TestRematchScoresAndDisconnect(t *testing.T) {
 		t.Fatal("rematch reset wrong state")
 	}
 }
+
 func TestSoloNeverStartsAndDrawHasNoScore(t *testing.T) {
 	a := newActor()
 	now := time.Unix(0, 0)
-	a.membership(member(1))
+	if err := a.membership(member(1)); err != nil {
+		t.Fatal(err)
+	}
 	a.command(command{1, Ready}, now)
 	a.tick(now)
 	if a.snapshot.Phase != Waiting {
 		t.Fatal("solo countdown")
 	}
-	a.membership(member(2))
+	if err := a.membership(member(2)); err != nil {
+		t.Fatal(err)
+	}
 	a.snapshot.Phase = Playing
 	a.match = game.New([]uint64{1, 2}, now, 1)
 	a.match.Remove(1)
@@ -166,17 +228,18 @@ func TestSoloNeverStartsAndDrawHasNoScore(t *testing.T) {
 		t.Fatal("draw scored")
 	}
 }
+
 func TestHubLimitsCleanupNamesAndQuickJoin(t *testing.T) {
 	h := New(5, 1)
 	defer h.Close()
 	players := []*Session{}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		s, err := h.Connect("\x1b[31mAlice / 🐈")
 		if err != nil {
 			t.Fatal(err)
 		}
 		players = append(players, s)
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if players[j].Name == s.Name || players[j].ID == s.ID {
 				t.Fatal("duplicate identity")
 			}
@@ -185,7 +248,7 @@ func TestHubLimitsCleanupNamesAndQuickJoin(t *testing.T) {
 	if _, err := h.Connect("extra"); err == nil {
 		t.Fatal("session limit")
 	}
-	if sanitize("\x1b\n🐈") == "" || sanitize("\x1b\n🐈") != "player" {
+	if sanitizePlayerName("\x1b\n🐈") == "" || sanitizePlayerName("\x1b\n🐈") != "player" {
 		t.Fatal("sanitization")
 	}
 	r, err := h.Join(players[0], 0, false)
@@ -219,13 +282,25 @@ func TestHubLimitsCleanupNamesAndQuickJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestSlowClientAndBoundedInput(t *testing.T) {
 	h := New(2, 1)
 	defer h.Close()
-	a, _ := h.Connect("a")
-	b, _ := h.Connect("b")
-	r, _ := h.Join(a, 0, false)
-	h.Join(b, r.ID, false)
+	a, err := h.Connect("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.Connect("b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := h.Join(a, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Join(b, r.ID, false); err != nil {
+		t.Fatal(err)
+	}
 	// Never consume a's frames. The other player still sees ready transitions.
 	r.Submit(a.ID, Ready)
 	deadline := time.After(time.Second)
@@ -244,15 +319,13 @@ ready:
 		t.Fatal("latest frame not bounded")
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for n := 0; n < 10000; n++ {
+	for range 4 {
+		wg.Go(func() {
+			for range 10000 {
 				r.Submit(a.ID, Up)
 				_ = r.Snapshot()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	h.Leave(a)
@@ -266,7 +339,10 @@ func TestInputPublishesWithoutWaitingForTick(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := New(2, 1)
 		defer h.Close()
-		player, _ := h.Connect("responsive")
+		player, err := h.Connect("responsive")
+		if err != nil {
+			t.Fatal(err)
+		}
 		r, err := h.Join(player, 0, true)
 		if err != nil {
 			t.Fatal(err)

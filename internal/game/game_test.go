@@ -8,6 +8,31 @@ import (
 
 var epoch = time.Unix(1000, 0)
 
+func TestActionsCanBranchFromTheSameSnapshot(t *testing.T) {
+	original := arena().View
+	original.Powers[1][2] = Capacity
+	before := original
+	moved, ok := movedView(original, 1, 1, 0, epoch)
+	if !ok || moved.Players[0].Pos != (Pos{2, 1}) || moved.Players[0].Capacity != 2 || moved.Powers[1][2] != None {
+		t.Fatal("movement branch did not collect the power-up")
+	}
+	bombed, ok := viewWithBomb(original, 1, epoch)
+	if !ok || bombed.BombCount != 1 || bombed.Bombs[0].Pos != (Pos{1, 1}) {
+		t.Fatal("bomb branch did not use the original position")
+	}
+	if original != before || moved.BombCount != 0 || bombed.Powers[1][2] != Capacity {
+		t.Fatal("independent action branches shared mutations")
+	}
+	replayed, ok := movedView(original, 1, 1, 0, epoch)
+	if !ok || replayed != moved {
+		t.Fatal("replaying the same action produced a different snapshot")
+	}
+	rejected, ok := movedView(original, 1, -1, 0, epoch)
+	if ok || rejected != original {
+		t.Fatal("rejected action changed the snapshot")
+	}
+}
+
 func arena() *Game {
 	g := New([]uint64{1, 2, 3, 4}, epoch, 42)
 	for y := 1; y < Height-1; y++ {
@@ -17,6 +42,7 @@ func arena() *Game {
 	}
 	return g
 }
+
 func TestMovementAndBombs(t *testing.T) {
 	g := arena()
 	if g.Move(1, -1, 0, epoch) {
@@ -60,6 +86,7 @@ func TestMovementAndBombs(t *testing.T) {
 		t.Fatal("diagonal move")
 	}
 }
+
 func TestBlastBlockingAndFlameLifetime(t *testing.T) {
 	g := arena()
 	g.Players[0].Pos = Pos{5, 5}
@@ -89,6 +116,7 @@ func TestBlastBlockingAndFlameLifetime(t *testing.T) {
 		t.Fatal("flame lingered")
 	}
 }
+
 func TestChainAndSimultaneousDeaths(t *testing.T) {
 	g := arena()
 	g.Players[0].Pos = Pos{3, 3}
@@ -102,6 +130,7 @@ func TestChainAndSimultaneousDeaths(t *testing.T) {
 		t.Fatal("chain must kill both and draw")
 	}
 }
+
 func TestFlamesKillOnEntryAndOwner(t *testing.T) {
 	g := arena()
 	g.Flames[1][2] = epoch.Add(time.Second)
@@ -115,10 +144,11 @@ func TestFlamesKillOnEntryAndOwner(t *testing.T) {
 		t.Fatal("owner immune")
 	}
 }
+
 func TestPowerUpsAndCaps(t *testing.T) {
 	for _, power := range []Power{Capacity, Range, Speed} {
 		g := arena()
-		for n := 0; n < 12; n++ {
+		for n := range 12 {
 			g.Players[0].Pos = Pos{1, 1}
 			g.Powers[1][2] = power
 			if !g.Move(1, 1, 0, epoch.Add(time.Duration(n)*time.Second)) {
@@ -138,10 +168,11 @@ func TestPowerUpsAndCaps(t *testing.T) {
 		t.Fatal("round defaults")
 	}
 }
+
 func TestCapacityCountsOnlyOwnedLiveBombs(t *testing.T) {
 	g := arena()
 	g.Players[0].Capacity = 5
-	for n := 0; n < 5; n++ {
+	for n := range 5 {
 		g.Players[0].Pos = Pos{1 + n*2, 3}
 		if !g.Place(1, epoch) {
 			t.Fatal("capacity five unavailable")
@@ -161,6 +192,7 @@ func TestCapacityCountsOnlyOwnedLiveBombs(t *testing.T) {
 		t.Fatal("capacity not released")
 	}
 }
+
 func TestEliminationAndTimeLimit(t *testing.T) {
 	g := arena()
 	g.Place(1, epoch)
@@ -187,11 +219,12 @@ func TestEliminationAndTimeLimit(t *testing.T) {
 		t.Fatal("last survivor")
 	}
 }
+
 func TestMapSafetySymmetryAndConnectivity(t *testing.T) {
-	for seed := int64(0); seed < 100; seed++ {
+	for seed := range int64(100) {
 		g := New([]uint64{1, 2, 3, 4}, epoch, seed)
-		for y := 0; y < Height; y++ {
-			for x := 0; x < Width; x++ {
+		for y := range Height {
+			for x := range Width {
 				tile := g.Tiles[y][x]
 				if tile != g.Tiles[y][Width-1-x] || tile != g.Tiles[Height-1-y][x] {
 					t.Fatal("asymmetric map")
@@ -201,7 +234,7 @@ func TestMapSafetySymmetryAndConnectivity(t *testing.T) {
 				}
 			}
 		}
-		for _, p := range Spawns {
+		for _, p := range Spawns() {
 			safe := 0
 			for _, d := range []Pos{{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
 				if g.Tiles[p.Y+d.Y][p.X+d.X] == Floor {
@@ -212,8 +245,8 @@ func TestMapSafetySymmetryAndConnectivity(t *testing.T) {
 				t.Fatal("unsafe spawn")
 			}
 		}
-		seen := map[Pos]bool{Spawns[0]: true}
-		queue := []Pos{Spawns[0]}
+		seen := map[Pos]bool{Spawns()[0]: true}
+		queue := []Pos{Spawns()[0]}
 		for len(queue) > 0 {
 			p := queue[0]
 			queue = queue[1:]
@@ -225,18 +258,19 @@ func TestMapSafetySymmetryAndConnectivity(t *testing.T) {
 				}
 			}
 		}
-		for _, p := range Spawns {
+		for _, p := range Spawns() {
 			if !seen[p] {
 				t.Fatal("spawn inaccessible after clearing blocks")
 			}
 		}
 	}
 }
+
 func TestSeededRoundsAndDrops(t *testing.T) {
 	a, b := arena(), arena()
 	counts := [4]int{}
 	// Exercise seeded drop decisions over many destroyed blocks.
-	for n := 0; n < 10000; n++ {
+	for range 10000 {
 		for _, g := range []*Game{a, b} {
 			g.Tiles[3][4] = Block
 			g.Bombs[0] = Bomb{Pos: Pos{3, 3}, Range: 1, Due: epoch}
@@ -288,4 +322,38 @@ func TestDeterministicRoundReplay(t *testing.T) {
 		}
 	}
 	t.Fatal("replayed round did not finish")
+}
+
+func TestInvalidMovementPreservesState(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	for _, step := range []Pos{{0, 0}, {1, 1}, {2, 0}, {minInt, minInt + 1}, {maxInt, 2}} {
+		g := arena()
+		before := g.View
+		if g.Move(1, step.X, step.Y, epoch) || g.View != before {
+			t.Fatalf("invalid movement changed state: %+v", step)
+		}
+	}
+}
+
+func TestSnapshotAndSpawnsAreIndependentValues(t *testing.T) {
+	spawns := Spawns()
+	spawns[0] = Pos{7, 7}
+	g := arena()
+	if g.Players[0].Pos != (Pos{1, 1}) {
+		t.Fatal("changing a spawn copy affected a new round")
+	}
+	before := g.View
+	copy := g.View
+	copy.Tiles[1][2] = Wall
+	copy.Players[0].Alive = false
+	copy.Powers[1][2] = Speed
+	copy.Flames[1][2] = epoch
+	copy.Bombs[0] = Bomb{Owner: 99}
+	if g.View != before {
+		t.Fatal("changing a snapshot affected the live round")
+	}
+	if !g.Move(1, 1, 0, epoch) || before.Players[0].Pos != (Pos{1, 1}) {
+		t.Fatal("advancing the round affected an earlier snapshot")
+	}
 }

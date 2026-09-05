@@ -1,21 +1,29 @@
 package ui
 
 import (
-	"bomber-cli/internal/game"
-	"bomber-cli/internal/room"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+
+	"bomber-cli/internal/game"
+	"bomber-cli/internal/room"
 )
 
 func TestRenderingAndSmallWindow(t *testing.T) {
 	h := room.New(4, 32)
 	defer h.Close()
-	s, _ := h.Connect("player")
+	s, err := h.Connect("player")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m := New(h, s, 60, 24, true)
-	r, _ := h.Join(s, 0, true)
+	r, err := h.Join(s, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.Room = r
 	m.Snapshot = room.Snapshot{ID: r.ID, Phase: room.Playing, Count: 4, Game: game.New([]uint64{1, 2, 3, 4}, time.Now(), 1).View}
 	for i := range m.Snapshot.Members {
@@ -44,14 +52,23 @@ func TestRenderingAndSmallWindow(t *testing.T) {
 		t.Fatal("small terminal cannot leave")
 	}
 }
+
 func TestLobbyScrolling(t *testing.T) {
 	h := room.New(40, 32)
 	defer h.Close()
-	for i := 0; i < 32; i++ {
-		s, _ := h.Connect("p")
-		h.Join(s, 0, true)
+	for range 32 {
+		s, err := h.Connect("p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.Join(s, 0, true); err != nil {
+			t.Fatal(err)
+		}
 	}
-	s, _ := h.Connect("viewer")
+	s, err := h.Connect("viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m := New(h, s, 60, 24, false)
 	m.selected = 33
 	view := m.View()
@@ -63,8 +80,14 @@ func TestLobbyScrolling(t *testing.T) {
 func TestSnapshotUpdatesWithoutPolling(t *testing.T) {
 	h := room.New(1, 1)
 	defer h.Close()
-	player, _ := h.Connect("responsive")
-	r, _ := h.Join(player, 0, true)
+	player, err := h.Connect("responsive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := h.Join(player, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m := New(h, player, 60, 24, false)
 	m.Room = r
 	snapshot := r.Snapshot()
@@ -79,4 +102,69 @@ func TestSnapshotUpdatesWithoutPolling(t *testing.T) {
 	if !updated.(Model).Snapshot.Members[0].Ready {
 		t.Fatal("snapshot from another room was applied")
 	}
+}
+
+func TestBoardRenderingIsPureAndFlamesTakePrecedence(t *testing.T) {
+	now := time.Unix(1000, 0)
+	view := game.New([]uint64{1, 2}, now, 42).View
+	view.Powers[1][1] = game.Capacity
+	view.Bombs[0] = game.Bomb{Pos: game.Pos{X: 1, Y: 1}, Owner: 1}
+	view.BombCount = 1
+	view.Flames[1][1] = now.Add(time.Second)
+	before := view
+	plain := renderBoard(view, false)
+	if plain != renderBoard(view, false) || view != before {
+		t.Fatal("rendering changed state or produced inconsistent output")
+	}
+	if ansi.Strip(renderBoard(view, true)) != plain {
+		t.Fatal("color changed board content")
+	}
+	row := strings.Split(plain, "\n")[1]
+	if row[2:4] != "**" {
+		t.Fatalf("flames should obscure the player, bomb, and pickup: %q", row)
+	}
+}
+
+func TestBoardDisplayPriorityAndBombPulse(t *testing.T) {
+	now := time.Unix(1000, 0)
+	position := game.Pos{X: 1, Y: 1}
+	view := game.View{Started: now, Now: now}
+	view.Tiles[1][1] = game.Block
+	view.Powers[1][1] = game.Speed
+	view.Bombs[0] = game.Bomb{Pos: position}
+	view.BombCount = 1
+	view.Players[0] = game.Player{ID: 1, Pos: position, Alive: true}
+	view.Players[1] = game.Player{ID: 2, Pos: position, Alive: true}
+	view.Flames[1][1] = now.Add(time.Second)
+
+	assertCell := func(want string) {
+		t.Helper()
+		row := strings.Split(renderBoard(view, false), "\n")[1]
+		if got := row[2:4]; got != want {
+			t.Fatalf("cell = %q, want %q", got, want)
+		}
+	}
+	assertCell("**")
+	view.Flames[1][1] = now
+	assertCell("P2")
+	view.Players[1].Alive = false
+	assertCell("P1")
+	view.Players[0].Alive = false
+	assertCell("o*")
+	view.Now = now.Add(250 * time.Millisecond)
+	assertCell("O*")
+	view.Now = now.Add(500 * time.Millisecond)
+	assertCell("o*")
+	view.BombCount = 0
+	assertCell("S+")
+	view.Powers[1][1] = game.Range
+	assertCell("R+")
+	view.Powers[1][1] = game.Capacity
+	assertCell("B+")
+	view.Powers[1][1] = game.None
+	assertCell("[]")
+	view.Tiles[1][1] = game.Wall
+	assertCell("##")
+	view.Tiles[1][1] = game.Floor
+	assertCell("  ")
 }
