@@ -1,3 +1,5 @@
 /bin/
 /data/
 *.log
+
+/.local-test/

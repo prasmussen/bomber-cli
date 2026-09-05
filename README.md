@@ -103,6 +103,29 @@ Build the binary on Linux, or cross-compile with
 persistent `/var/lib/bomber-cli` state directory for the host key. Open TCP 2323
 in the host firewall. Public deployment is outside this repository's scope.
 
+## Local development scripts
+
+Use `./scripts/dev.sh` for repeatable checks and managed test sessions (Python
+3.9+, Go, and OpenSSH required on macOS or Linux):
+
+```sh
+./scripts/dev.sh test            # go test -race, go vet, and a test build
+./scripts/dev.sh smoke           # real SSH UI/exit check; cleans up its server
+./scripts/dev.sh start           # build and start on 127.0.0.1:23230
+./scripts/dev.sh ssh alice       # first terminal
+./scripts/dev.sh ssh bob         # second terminal
+./scripts/dev.sh status
+./scripts/dev.sh kill-sessions   # disconnect managed clients; keep server
+./scripts/dev.sh stop            # stop managed clients and test server
+```
+
+`build` is also available separately. The test executable, host key, known-hosts
+file, server log, and process records live in ignored `.local-test/`. Normal
+hosting on port 2323 and its `data/` directory are unaffected. The script refuses
+to take over an occupied test port. Cleanup checks each recorded PID's launch
+time and full command before signaling it; stale records never trigger a kill.
+Untracked SSH clients are disconnected when their managed server is stopped.
+
 ## Verification and architecture
 
 ```sh
