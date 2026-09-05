@@ -125,11 +125,6 @@ func (g *Game) Move(id uint64, dx, dy int, now time.Time) bool {
 	if q.X < 0 || q.Y < 0 || q.X >= Width || q.Y >= Height || g.Tiles[q.Y][q.X] != Floor || g.bombAt(q) >= 0 {
 		return false
 	}
-	for _, other := range g.Players {
-		if other.Alive && other.Pos == q {
-			return false
-		}
-	}
 	p.Pos = q
 	p.NextMove = now.Add(p.Cooldown)
 	if now.Before(g.Flames[q.Y][q.X]) {

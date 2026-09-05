@@ -43,10 +43,20 @@ func TestMovementAndBombs(t *testing.T) {
 	}
 	g.Tiles[1][3] = Floor
 	g.Players[1].Pos = Pos{3, 1}
-	if g.Move(1, 1, 0, epoch.Add(time.Second)) {
-		t.Fatal("walked through player")
+	if !g.Move(1, 1, 0, epoch.Add(time.Second)) {
+		t.Fatal("cannot enter another player's tile")
 	}
-	if g.Move(1, 1, 1, epoch.Add(time.Second)) {
+	g.Tick(epoch.Add(1500 * time.Millisecond))
+	if g.Players[0].Pos != (Pos{3, 1}) || g.Players[1].Pos != (Pos{3, 1}) || !g.Players[0].Alive || !g.Players[1].Alive {
+		t.Fatal("players cannot stay on the same tile")
+	}
+	if !g.Move(1, 1, 0, epoch.Add(1500*time.Millisecond)) || !g.Move(2, -1, 0, epoch.Add(1500*time.Millisecond)) {
+		t.Fatal("players cannot move past each other")
+	}
+	if g.Players[0].Pos != (Pos{4, 1}) || g.Players[1].Pos != (Pos{2, 1}) {
+		t.Fatal("players did not pass each other")
+	}
+	if g.Move(1, 1, 1, epoch.Add(1700*time.Millisecond)) {
 		t.Fatal("diagonal move")
 	}
 }
