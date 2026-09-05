@@ -44,9 +44,9 @@ match continues; Escape and Ctrl-C still work.
   Leaving discards your room score. Active and result rooms reject joins.
 
 The arena is 15×13 cells, each two characters wide. `##` is a solid wall, `[]` a
-destructible block, `P1`–`P4` players, `2*`/`1*` a bomb countdown, and `**` fire.
-A player standing on a bomb is drawn above it; the side panel keeps all bomb
-countdowns visible. `B+`, `R+`, and `S+` increase bomb
+destructible block, `P1`–`P4` players, pulsing `o*`/`O*` bombs, and `**` fire.
+Bombs pulse at a steady rhythm without revealing their remaining fuse time.
+A player standing on a bomb is drawn above it. `B+`, `R+`, and `S+` increase bomb
 capacity, blast range, and speed. Player numbers correspond to corner spawns.
 
 Bombs detonate after two seconds, triggering other bombs. Flames last 500 ms and

@@ -182,8 +182,11 @@ func (m Model) View() string {
 				for i := 0; i < s.Game.BombCount; i++ {
 					bomb := s.Game.Bombs[i]
 					if bomb.Pos == p {
-						tile = fmt.Sprintf("%d*", seconds(bomb.Due.Sub(s.Game.Now)))
-						c = 35
+						// Pulse at a steady rhythm independent of the fuse.
+						tile, c = "o*", 35
+						if s.Game.Now.Sub(s.Game.Started)/(250*time.Millisecond)%2 == 1 {
+							tile, c = "O*", 95
+						}
 					}
 				}
 				for i, player := range s.Game.Players {
@@ -197,22 +200,6 @@ func (m Model) View() string {
 					c = 31
 				}
 				b.WriteString(m.paint(tile, c))
-			}
-			// Keep every countdown visible even while a player stands on a bomb.
-			if y == 0 && s.Game.BombCount > 0 {
-				b.WriteString("  BOMBS")
-			}
-			if y >= 1 && y <= 10 {
-				for n := (y - 1) * 2; n < y*2 && n < s.Game.BombCount; n++ {
-					bomb := s.Game.Bombs[n]
-					number := 0
-					for i, p := range s.Game.Players {
-						if p.ID == bomb.Owner {
-							number = i + 1
-						}
-					}
-					fmt.Fprintf(&b, "  P%d:%d*", number, seconds(bomb.Due.Sub(s.Game.Now)))
-				}
 			}
 			b.WriteByte('\n')
 		}

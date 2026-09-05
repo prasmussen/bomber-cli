@@ -28,7 +28,7 @@ Linux/arm64 engine. No public deployment was performed.
 | Solo waiting and scoreless draw | `TestSoloNeverStartsAndDrawHasNoScore` |
 | Quick join, create, limits, unique sanitized names/IDs, empty-room cleanup | `TestHubLimitsCleanupNamesAndQuickJoin`; UI lobby controls |
 | One actor per room at 20 Hz; bounded inputs and replaceable value-only snapshots | `Room.run`, `Submit`, `publish`; `TestSlowClientAndBoundedInput` under race detector |
-| Full-screen color/ASCII UI, two-column tiles, numbers, countdowns, fire, upgrades, score and controls | `Model.View`; render-size test and manual SSH match |
+| Full-screen color/ASCII UI, two-column tiles, numbers, pulsing bombs, fire, upgrades, score and controls | `Model.View`; render-size test and manual SSH match |
 | Room selection and scrolling at minimum size | `TestLobbyScrolling` |
 | Minimum 60×24, resize prompt, gameplay suppression, Escape/Ctrl-C | UI tests and `TestRealSSHMultiplayerResizeAndDisconnect` |
 | Spectating after death | Snapshot retains eliminated members; game rejects dead-player moves/bombs; UI shows `out` and continues the shared board |
@@ -48,7 +48,7 @@ Opened two independent OpenSSH PTYs at 60×24 against the local executable on
 127.0.0.1:23230, as `alice` and `bob`. Quick joined the same room and readied both.
 Observed the three-second countdown and the same arena in both terminals. Moved
 Alice right and back left, placed a bomb, and moved Bob left. Both terminals
-showed the bomb's 2→1 countdown and resulting explosion. Alice died; both
+showed the explosion. Alice died; both
 terminals displayed `bob wins!`, Bob's score became 1, and the room returned to
 ready-up. Readied both again and observed a fresh map and retained score.
 Escape returned both to the lobby; Ctrl-C restored both terminals and exited SSH.
