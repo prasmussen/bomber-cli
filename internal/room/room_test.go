@@ -4,6 +4,7 @@ import (
 	"bomber-cli/internal/game"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -216,4 +217,30 @@ ready:
 	if len(h.List()) != 0 {
 		t.Fatal("flood prevented cleanup")
 	}
+}
+
+func TestInputPublishesWithoutWaitingForTick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := New(2, 1)
+		defer h.Close()
+		player, _ := h.Connect("responsive")
+		r, err := h.Join(player, 0, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		now := time.Now()
+		r.Submit(player.ID, Ready)
+		synctest.Wait()
+		if time.Now() != now {
+			t.Fatal("input required advancing the tick clock")
+		}
+		if !r.Snapshot().Members[0].Ready {
+			t.Fatal("input was held until the next timer tick")
+		}
+		frame := <-player.Frames
+		if !frame.Members[0].Ready {
+			t.Fatal("updated snapshot was not published immediately")
+		}
+	})
 }

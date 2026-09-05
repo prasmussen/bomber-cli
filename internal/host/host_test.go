@@ -120,6 +120,24 @@ func TestRealSSHMultiplayerResizeAndDisconnect(t *testing.T) {
 	// renderer accidentally.
 	clearedArenaRow := strings.Repeat("\x1b[34m##\x1b[0m", 15) + "\x1b[K"
 	eventually(t, func() bool { return strings.Contains(oa.text(), clearedArenaRow) })
+	// Measure real keypress-to-render latency on the guaranteed clear spawn
+	// exit. Alternate back to the spawn so the rest of the match test is stable.
+	var totalLatency, worstLatency time.Duration
+	for move := 0; move < 8; move++ {
+		time.Sleep(110 * time.Millisecond)
+		key, prefix := "d", "\x1b[34m##\x1b[0m\x1b[37m  \x1b[0m\x1b[36mP1"
+		if move%2 == 1 {
+			key, prefix = "a", "\x1b[34m##\x1b[0m\x1b[36mP1"
+		}
+		offset := len(oa.text())
+		pressed := time.Now()
+		io.WriteString(ia, key)
+		eventually(t, func() bool { return strings.Contains(oa.text()[offset:], prefix) })
+		latency := time.Since(pressed)
+		totalLatency += latency
+		worstLatency = max(worstLatency, latency)
+	}
+	t.Logf("SSH movement keypress-to-render: mean %s, worst %s (8 moves)", totalLatency/8, worstLatency)
 	if err := sa.WindowChange(15, 40); err != nil {
 		t.Fatal(err)
 	}

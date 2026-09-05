@@ -28,10 +28,10 @@ func TestMovementAndBombs(t *testing.T) {
 	if !g.Move(1, 1, 0, epoch) {
 		t.Fatal("cannot leave own bomb")
 	}
-	if g.Move(1, 1, 0, epoch.Add(149*time.Millisecond)) {
+	if g.Move(1, 1, 0, epoch.Add(99*time.Millisecond)) {
 		t.Fatal("cooldown ignored")
 	}
-	if g.Move(1, -1, 0, epoch.Add(150*time.Millisecond)) {
+	if g.Move(1, -1, 0, epoch.Add(100*time.Millisecond)) {
 		t.Fatal("reentered bomb")
 	}
 	if g.Place(1, epoch) {
@@ -119,12 +119,12 @@ func TestPowerUpsAndCaps(t *testing.T) {
 			}
 		}
 		p := g.Players[0]
-		if power == Capacity && p.Capacity != 5 || power == Range && p.Range != 8 || power == Speed && p.Cooldown != 75*time.Millisecond {
+		if power == Capacity && p.Capacity != 5 || power == Range && p.Range != 8 || power == Speed && p.Cooldown != 25*time.Millisecond {
 			t.Fatalf("wrong upgrade cap: %+v", p)
 		}
 	}
 	g := New([]uint64{1, 2}, epoch, 1)
-	if g.Players[0].Capacity != 1 || g.Players[0].Range != 2 || g.Players[0].Cooldown != 150*time.Millisecond {
+	if g.Players[0].Capacity != 1 || g.Players[0].Range != 2 || g.Players[0].Cooldown != 100*time.Millisecond {
 		t.Fatal("round defaults")
 	}
 }

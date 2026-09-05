@@ -35,18 +35,16 @@ func tick() tea.Cmd {
 func (m Model) Init() tea.Cmd { return tick() }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case room.Snapshot:
+		if m.Room != nil && v.ID == m.Room.ID {
+			m.Snapshot = v
+		}
 	case tea.WindowSizeMsg:
 		m.Width = v.Width
 		m.Height = v.Height
 	case pulse:
 		m.now = time.Time(v)
-		if m.Room != nil {
-			select {
-			case s := <-m.Session.Frames:
-				m.Snapshot = s
-			default:
-			}
-		} else {
+		if m.Room == nil {
 			m.rooms = m.Hub.List()
 			if m.selected >= len(m.rooms)+2 {
 				m.selected = 0

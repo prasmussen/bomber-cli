@@ -96,7 +96,7 @@ func New(ids []uint64, now time.Time, seed int64) *Game {
 		if i >= 4 {
 			break
 		}
-		g.Players[i] = Player{ID: id, Pos: Spawns[i], Alive: true, Capacity: 1, Range: 2, Cooldown: 150 * time.Millisecond}
+		g.Players[i] = Player{ID: id, Pos: Spawns[i], Alive: true, Capacity: 1, Range: 2, Cooldown: 100 * time.Millisecond}
 	}
 	return g
 }
@@ -146,7 +146,7 @@ func (g *Game) Move(id uint64, dx, dy int, now time.Time) bool {
 			p.Range++
 		}
 	case Speed:
-		if p.Cooldown > 75*time.Millisecond {
+		if p.Cooldown > 25*time.Millisecond {
 			p.Cooldown -= 25 * time.Millisecond
 		}
 	}

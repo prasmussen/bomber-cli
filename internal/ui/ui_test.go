@@ -59,3 +59,24 @@ func TestLobbyScrolling(t *testing.T) {
 		t.Fatal("lobby selection not visible")
 	}
 }
+
+func TestSnapshotUpdatesWithoutPolling(t *testing.T) {
+	h := room.New(1, 1)
+	defer h.Close()
+	player, _ := h.Connect("responsive")
+	r, _ := h.Join(player, 0, true)
+	m := New(h, player, 60, 24, false)
+	m.Room = r
+	snapshot := r.Snapshot()
+	snapshot.Members[0].Ready = true
+	updated, cmd := m.Update(snapshot)
+	if !updated.(Model).Snapshot.Members[0].Ready || cmd != nil {
+		t.Fatal("snapshot not applied directly")
+	}
+	snapshot.ID++
+	snapshot.Members[0].Ready = false
+	updated, _ = updated.Update(snapshot)
+	if !updated.(Model).Snapshot.Members[0].Ready {
+		t.Fatal("snapshot from another room was applied")
+	}
+}

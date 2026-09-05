@@ -166,7 +166,7 @@ func New(cfg Config) (*Host, error) {
 		windows := s.Context().Value(connKey{}).(*connection).windows
 		ctx, cancel := context.WithCancel(s.Context())
 		defer cancel()
-		opts := append(wishtea.MakeOptions(s), tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFPS(20))
+		opts := append(wishtea.MakeOptions(s), tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFPS(60))
 		program := tea.NewProgram(ui.New(h.Hub, player, pty.Window.Width, pty.Window.Height, pty.Term != "dumb"), opts...)
 		go func() {
 			// SSH output is not a local terminal, so Bubble Tea cannot discover
@@ -176,6 +176,8 @@ func New(cfg Config) (*Host, error) {
 				select {
 				case <-ctx.Done():
 					return
+				case snapshot := <-player.Frames:
+					program.Send(snapshot)
 				case w, ok := <-windows:
 					if !ok {
 						return

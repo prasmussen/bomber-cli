@@ -54,7 +54,7 @@ kill every player, including the bomb owner. You can step off your own bomb but
 cannot walk back through it. Blasts stop at walls and the first block they hit.
 Destroyed blocks have a 30% chance of dropping one of the three upgrades equally.
 Capacity starts at one and caps at five; range starts at two and caps at eight;
-movement starts at 150 ms per step and improves by 25 ms to a 75 ms minimum.
+movement starts at 100 ms per step and improves by 25 ms to a 25 ms minimum.
 Upgrades reset each round. Last survivor wins; simultaneous final deaths or a
 three-minute timeout with multiple survivors produce a draw. Leaving eliminates
 you immediately; your bombs remain in an ongoing match.
@@ -111,6 +111,7 @@ Use `./scripts/dev.sh` for repeatable checks and managed test sessions (Python
 ```sh
 ./scripts/dev.sh test            # go test -race, go vet, and a test build
 ./scripts/dev.sh smoke           # real SSH UI/exit check; cleans up its server
+./scripts/dev.sh latency         # measure real SSH keypress-to-render latency
 ./scripts/dev.sh start           # build and start on 127.0.0.1:23230
 ./scripts/dev.sh ssh alice       # first terminal
 ./scripts/dev.sh ssh bob         # second terminal
@@ -147,8 +148,9 @@ die, verify the winner and score, ready for a rematch, resize one terminal below
 60×24, restore it, and leave with Escape. Ctrl-C exits.
 
 `internal/game` accepts explicit timestamps and a random seed. `internal/room`
-owns each room in one goroutine at 20 Hz; its input queue has 64 slots, control
+owns each room in one goroutine, processing inputs immediately and advancing
+bomb timers and round state at 20 Hz. Its input queue has 64 slots, control
 queue 16, and each session gets a one-slot latest-snapshot channel. Snapshots
 contain only values and fixed arrays. A full frame slot is replaced, so network
-writers never block matches. `internal/ui` consumes these snapshots through
-Bubble Tea; `internal/host` owns SSH policy, keys, limits, and shutdown.
+writers never block matches. `internal/ui` receives snapshots as they arrive through
+Bubble Tea, which renders at up to 60 FPS; `internal/host` owns SSH policy, keys, limits, and shutdown.

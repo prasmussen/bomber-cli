@@ -20,7 +20,7 @@ Target Go 1.27.1, the latest stable release listed in the [official release hist
 - Use a 15×13 arena with solid borders, indestructible pillars, randomly placed destructible blocks, and cleared corner spawn exits. Generate symmetric maps with routes connecting spawn areas once blocks are destroyed.
 - Start with one bomb, blast range two, and a 150 ms movement cooldown. Bombs explode after two seconds; flames last 500 ms. Blasts travel in four directions, stop at solid walls or the first destructible block, and trigger other bombs.
 - Players can leave their newly placed bomb but cannot walk back through it. Flames kill instantly, including the owner; simultaneous final deaths produce a draw.
-- Destroyed blocks have a 30% chance to reveal an equally weighted bomb-capacity, range, or speed upgrade. Cap capacity at five, range at eight, and speed at a 75 ms cooldown. Reset upgrades each round.
+- Destroyed blocks have a 30% chance to reveal an equally weighted bomb-capacity, range, or speed upgrade. Cap capacity at five, range at eight, and speed at a 25 ms cooldown. Reset upgrades each round.
 - Last survivor wins. A three-minute round limit produces a draw if multiple players remain. Disconnecting or leaving eliminates that player; existing bombs still detonate.
 - Separate deterministic game rules, room coordination, terminal presentation, and SSH hosting. Each room owns its state in a single goroutine running at 20 ticks per second.
 - Sessions submit bounded input commands and consume immutable snapshots. Slow connections skip stale frames without blocking matches. Inject time and seeded randomness into game logic for tests.

@@ -157,7 +157,7 @@ func (a *actor) membership(c control) error {
 	}
 	return nil
 }
-func (a *actor) command(c command, now time.Time) {
+func (a *actor) command(c command, now time.Time) bool {
 	s := &a.snapshot
 	member := -1
 	for i, m := range s.Members {
@@ -167,7 +167,7 @@ func (a *actor) command(c command, now time.Time) {
 		}
 	}
 	if member < 0 {
-		return
+		return false
 	}
 	if c.action == Ready && (s.Phase == Waiting || s.Phase == Countdown) {
 		s.Members[member].Ready = !s.Members[member].Ready
@@ -175,20 +175,22 @@ func (a *actor) command(c command, now time.Time) {
 			s.Phase = Waiting
 			s.Deadline = time.Time{}
 		}
+		return true
 	} else if s.Phase == Playing {
 		switch c.action {
 		case Up:
-			a.match.Move(c.id, 0, -1, now)
+			return a.match.Move(c.id, 0, -1, now)
 		case Down:
-			a.match.Move(c.id, 0, 1, now)
+			return a.match.Move(c.id, 0, 1, now)
 		case Left:
-			a.match.Move(c.id, -1, 0, now)
+			return a.match.Move(c.id, -1, 0, now)
 		case Right:
-			a.match.Move(c.id, 1, 0, now)
+			return a.match.Move(c.id, 1, 0, now)
 		case Bomb:
-			a.match.Place(c.id, now)
+			return a.match.Place(c.id, now)
 		}
 	}
+	return false
 }
 func (a *actor) tick(now time.Time) {
 	s := &a.snapshot
@@ -265,16 +267,14 @@ func (r *Room) run(ctx context.Context, seed int64) {
 			err := a.membership(c)
 			emit()
 			c.reply <- err
-		case now := <-ticker.C:
-			// Bound work per tick even when a client floods its input stream.
-			for n := 0; n < 64; n++ {
-				select {
-				case c := <-r.input:
-					a.command(c, now)
-				default:
-					n = 64
+		case c := <-r.input:
+			if a.command(c, time.Now()) {
+				if a.match != nil {
+					a.snapshot.Game = a.match.View
 				}
+				emit()
 			}
+		case now := <-ticker.C:
 			a.tick(now)
 			emit()
 		}

@@ -248,6 +248,7 @@ def main():
         ("test", "race tests, vet, and build"), ("build", "build private test executable"),
         ("start", "build and start test server on loopback port 23230"),
         ("status", "show tracked process status"),
+        ("latency", "measure keypress-to-render latency through real SSH"),
         ("stop", "stop tracked SSH sessions and server"),
         ("kill-sessions", "stop tracked SSH clients, keeping server running"),
         ("smoke", "start server if needed and verify real SSH UI/exit; clean up if started"),
@@ -259,6 +260,9 @@ def main():
     os.umask(0o077)
     if args.command == "ssh":
         connect(args.name)
+    elif args.command == "latency":
+        run("go", "test", "-race", "-v", "./internal/host", "-run",
+            "^TestRealSSHMultiplayerResizeAndDisconnect$", "-count=1")
     elif args.command == "kill-sessions":
         stop(sessions_only=True)
     elif args.command == "smoke":

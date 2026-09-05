@@ -15,7 +15,7 @@ Linux/arm64 engine. No public deployment was performed.
 | Requirement | Implementation and verification |
 | --- | --- |
 | 15×13 symmetric maps, walls, pillars, blocks, safe spawns, connected routes | `internal/game`; `TestMapSafetySymmetryAndConnectivity`, 100 seeds |
-| Movement, collision, 150 ms cooldown, leave-own-bomb behavior | `TestMovementAndBombs` |
+| Movement, collision, 100 ms cooldown, leave-own-bomb behavior | `TestMovementAndBombs` |
 | Two-second fuse, 500 ms flames, four-direction blast blocking | `TestBlastBlockingAndFlameLifetime` |
 | Capacity limits and replenishment | `TestCapacityCountsOnlyOwnedLiveBombs` |
 | Chain reactions and simultaneous final deaths | `TestChainAndSimultaneousDeaths` |
@@ -27,7 +27,7 @@ Linux/arm64 engine. No public deployment was performed.
 | Disconnect result, score retention, reset upgrades, rematch | `TestRematchScoresAndDisconnect` |
 | Solo waiting and scoreless draw | `TestSoloNeverStartsAndDrawHasNoScore` |
 | Quick join, create, limits, unique sanitized names/IDs, empty-room cleanup | `TestHubLimitsCleanupNamesAndQuickJoin`; UI lobby controls |
-| One actor per room at 20 Hz; bounded inputs and replaceable value-only snapshots | `Room.run`, `Submit`, `publish`; `TestSlowClientAndBoundedInput` under race detector |
+| One actor per room with immediate input processing and 20 Hz timers; bounded inputs and replaceable value-only snapshots | `Room.run`, `Submit`, `publish`; `TestSlowClientAndBoundedInput` under race detector |
 | Full-screen color/ASCII UI, two-column tiles, numbers, pulsing bombs, fire, upgrades, score and controls | `Model.View`; render-size test and manual SSH match |
 | Room selection and scrolling at minimum size | `TestLobbyScrolling` |
 | Minimum 60×24, resize prompt, gameplay suppression, Escape/Ctrl-C | UI tests and `TestRealSSHMultiplayerResizeAndDisconnect` |
