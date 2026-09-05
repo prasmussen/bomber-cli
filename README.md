@@ -3,6 +3,10 @@
 Multiplayer Bomberman in your terminal, served over SSH with Wish and Bubble Tea.
 Two to four players share a room; anyone can join without an account or password.
 
+## Gameplay
+
+https://github.com/user-attachments/assets/c786a28f-1aaa-4017-92f4-2a95f1b222ca
+
 ## Build and run
 
 Requires Go **1.27.1**. Dependencies are pinned in `go.mod` and `go.sum`.
