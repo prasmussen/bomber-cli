@@ -12,6 +12,8 @@ jobs:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -46,3 +48,10 @@ jobs:
           name: ${{ steps.artifact.outputs.name }}
           path: ${{ steps.artifact.outputs.name }}.tar.gz
           if-no-files-found: error
+      - name: Upload binary to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
+        run: gh release upload "$RELEASE_TAG" "$ARTIFACT_NAME.tar.gz" --clobber
