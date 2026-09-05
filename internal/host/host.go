@@ -169,6 +169,9 @@ func New(cfg Config) (*Host, error) {
 		opts := append(wishtea.MakeOptions(s), tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFPS(20))
 		program := tea.NewProgram(ui.New(h.Hub, player, pty.Window.Width, pty.Window.Height, pty.Term != "dumb"), opts...)
 		go func() {
+			// SSH output is not a local terminal, so Bubble Tea cannot discover
+			// its dimensions. Initialize the renderer as well as the model.
+			program.Send(tea.WindowSizeMsg{Width: pty.Window.Width, Height: pty.Window.Height})
 			for {
 				select {
 				case <-ctx.Done():

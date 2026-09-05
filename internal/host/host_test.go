@@ -115,6 +115,11 @@ func TestRealSSHMultiplayerResizeAndDisconnect(t *testing.T) {
 	eventually(t, func() bool { return h.Hub.List()[0].Phase == room.Countdown })
 	eventually(t, func() bool { return h.Hub.List()[0].Phase == room.Playing })
 	eventually(t, func() bool { return strings.Contains(oa.text(), "P1") && strings.Contains(ob.text(), "P2") })
+	// A 30-column arena row must erase the remaining columns of the 60-column
+	// PTY, including lobby text. Check before any resize can initialize the
+	// renderer accidentally.
+	clearedArenaRow := strings.Repeat("\x1b[34m##\x1b[0m", 15) + "\x1b[K"
+	eventually(t, func() bool { return strings.Contains(oa.text(), clearedArenaRow) })
 	if err := sa.WindowChange(15, 40); err != nil {
 		t.Fatal(err)
 	}
