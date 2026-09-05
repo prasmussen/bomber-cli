@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"bomber-cli/internal/room"
@@ -19,6 +20,80 @@ import (
 type capture struct {
 	mu sync.Mutex
 	b  bytes.Buffer
+}
+
+func ptyPayload(width, height uint32, modes string) []byte {
+	return gossh.Marshal(struct {
+		Term                                     string
+		Width, Height, WidthPixels, HeightPixels uint32
+		Modes                                    string
+	}{"xterm", width, height, 0, 0, modes})
+}
+
+func TestMalformedSessionRequests(t *testing.T) {
+	_, addr := start(t, config(t))
+	c := dial(t, addr, "malformed")
+	s, err := c.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, payload := range [][]byte{
+		nil,
+		ptyPayload(10001, 24, "\x00"),
+		ptyPayload(60, ^uint32(0), "\x00"),
+		ptyPayload(60, 24, "\x01"),
+		append(ptyPayload(60, 24, "\x00"), 0),
+	} {
+		if ok, err := s.SendRequest("pty-req", true, payload); err != nil || ok {
+			t.Fatalf("invalid PTY: accepted=%v error=%v", ok, err)
+		}
+	}
+	if err := s.RequestPty("xterm", 24, 60, nil); err != nil {
+		t.Fatal("invalid requests prevented valid PTY:", err)
+	}
+	if ok, err := s.SendRequest("shell", true, []byte{0}); err != nil || ok {
+		t.Fatalf("malformed shell: accepted=%v error=%v", ok, err)
+	}
+	for _, payload := range [][]byte{nil, make([]byte, 15), gossh.Marshal(struct{ W, H, X, Y uint32 }{^uint32(0), 24, 0, 0})} {
+		if ok, err := s.SendRequest("window-change", true, payload); err != nil || ok {
+			t.Fatalf("invalid resize: accepted=%v error=%v", ok, err)
+		}
+	}
+	out := &capture{}
+	s.Stdout = out
+	if err := s.Shell(); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() bool { return strings.Contains(out.text(), "LOBBY") })
+}
+
+func TestConnectionCloseStopsTimer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a, b := net.Pipe()
+		defer b.Close()
+		h := &Host{conns: make(map[*connection]struct{})}
+		c := &connection{Conn: a, host: h}
+		h.conns[c] = struct{}{}
+		fired := false
+		c.timer = time.AfterFunc(time.Second, func() { fired = true })
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		if fired || len(h.conns) != 0 {
+			t.Fatal("closed connection retained timer or connection slot")
+		}
+	})
+}
+
+func FuzzPTYValidation(f *testing.F) {
+	f.Add(ptyPayload(60, 24, "\x00"))
+	f.Add([]byte{})
+	f.Add(ptyPayload(^uint32(0), 24, "\x01"))
+	f.Fuzz(func(t *testing.T, payload []byte) { validPTY(payload) })
 }
 
 func (c *capture) Write(p []byte) (int, error) { c.mu.Lock(); defer c.mu.Unlock(); return c.b.Write(p) }
@@ -40,8 +115,14 @@ func start(t *testing.T, cfg Config) (*Host, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return serveHost(t, h)
+}
+
+func serveHost(t *testing.T, h *Host) (*Host, string) {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
+		h.Hub.Close()
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)

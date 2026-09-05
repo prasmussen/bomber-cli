@@ -249,6 +249,7 @@ def main():
         ("start", "build and start test server on loopback port 23230"),
         ("status", "show tracked process status"),
         ("latency", "measure keypress-to-render latency through real SSH"),
+        ("stress", "repeat SSH churn, shutdown, and host-key failure tests under the race detector"),
         ("stop", "stop tracked SSH sessions and server"),
         ("kill-sessions", "stop tracked SSH clients, keeping server running"),
         ("smoke", "start server if needed and verify real SSH UI/exit; clean up if started"),
@@ -263,6 +264,10 @@ def main():
     elif args.command == "latency":
         run("go", "test", "-race", "-v", "./internal/host", "-run",
             "^TestRealSSHMultiplayerResizeAndDisconnect$", "-count=1")
+    elif args.command == "stress":
+        run("go", "test", "-race", "-count=10", "-timeout=3m",
+            "./internal/host", "./internal/room", "-run",
+            "^(TestSSH|TestHostKey(ConcurrentCreation|WriteFailure|FailurePreservesExistingFiles)|TestCloseReleasesRoomsAndSessions)")
     elif args.command == "kill-sessions":
         stop(sessions_only=True)
     elif args.command == "smoke":

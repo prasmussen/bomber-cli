@@ -18,6 +18,9 @@ ssh -p 2323 bob@localhost
 The first connection prompts you to trust the SSH host key. The server generates
 an Ed25519 private key with mode 0600 and reuses it on subsequent starts. Persist
 this file across upgrades so clients keep recognizing the server.
+New keys are written and synced to a temporary file, then atomically published
+without replacing an existing key. Concurrent starts reuse the winning key;
+failed writes remove the temporary file so startup can be retried.
 
 ```text
 --listen        :2323
@@ -67,6 +70,9 @@ commands, SCP, SFTP, agent/X11 forwarding, and TCP forwarding are rejected.
 Each connection is limited to one session channel. Connections that do not open
 an interactive shell within ten seconds are closed, including stalled handshakes.
 The connection limit includes those pending connections.
+Initial PTY requests and resizes are bounded to 10,000 columns/rows; malformed
+PTY, resize, and shell requests are rejected. Closing a connection cancels its
+pending handshake timer.
 
 Usernames become bounded ASCII display names; duplicates get numeric suffixes.
 Internal player IDs are independent of those names. Rooms and scores live only
@@ -112,6 +118,7 @@ Use `./scripts/dev.sh` for repeatable checks and managed test sessions (Python
 ./scripts/dev.sh test            # go test -race, go vet, and a test build
 ./scripts/dev.sh smoke           # real SSH UI/exit check; cleans up its server
 ./scripts/dev.sh latency         # measure real SSH keypress-to-render latency
+./scripts/dev.sh stress          # repeat race-enabled churn and lifecycle tests
 ./scripts/dev.sh start           # build and start on 127.0.0.1:23230
 ./scripts/dev.sh ssh alice       # first terminal
 ./scripts/dev.sh ssh bob         # second terminal
@@ -140,6 +147,17 @@ room lifecycle, queue bounds, and slow-client isolation. Integration tests start
 real SSH servers on ephemeral loopback ports and connect multiple SSH clients,
 exercise ready-up, a match, resizing, disconnects, and denied capabilities.
 
+The stress command runs ten repetitions of the lifecycle tests on ephemeral
+loopback ports. Each repetition cycles through 80 SSH sessions, with 16 connected
+at once, floods input and resizes, and verifies connection-slot and room cleanup.
+It checks goroutine recovery and retained Go heap after garbage collection;
+these are regression bounds, not a measurement of peak memory or process RSS.
+It also stalls a real SSH transport's writes to verify that another player can
+continue playing, and shuts down with that stalled client, an active match, and
+a pending handshake. Host-key tests cover concurrent creation and, on macOS and
+Linux, a forced partial write in an isolated process. All tests are also included
+in the normal test suite; the stress command repeats them to catch timing races.
+
 For a manual check, open the two SSH terminals above, quick join in each, and
 press Enter again to ready. From the top-left spawn, move one cell right,
 drop a bomb with Space, then move left and down to escape its blast through
@@ -149,7 +167,9 @@ die, verify the winner and score, ready for a rematch, resize one terminal below
 
 `internal/game` accepts explicit timestamps and a random seed. `internal/room`
 owns each room in one goroutine, processing inputs immediately and advancing
-bomb timers and round state at 20 Hz. Its input queue has 64 slots, control
+bomb timers and round state at 20 Hz. Due explosions and the match timeout are
+also resolved before gameplay inputs, so an input cannot bypass an expired
+deadline between ticks. Its input queue has 64 slots, control
 queue 16, and each session gets a one-slot latest-snapshot channel. Snapshots
 contain only values and fixed arrays. A full frame slot is replaced, so network
 writers never block matches. `internal/ui` receives snapshots as they arrive through

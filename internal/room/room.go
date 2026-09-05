@@ -158,6 +158,9 @@ func (a *actor) membership(c control) error {
 	return nil
 }
 func (a *actor) command(c command, now time.Time) bool {
+	if c.id == 0 || c.action > Bomb {
+		return false
+	}
 	s := &a.snapshot
 	member := -1
 	for i, m := range s.Members {
@@ -168,6 +171,15 @@ func (a *actor) command(c command, now time.Time) bool {
 	}
 	if member < 0 {
 		return false
+	}
+	// Resolve expired bombs and the round deadline before accepting an action.
+	// Inputs are processed between timer ticks and must not let a player escape
+	// an explosion that is already due.
+	if s.Phase == Playing {
+		a.tick(now)
+		if s.Phase != Playing {
+			return true
+		}
 	}
 	if c.action == Ready && (s.Phase == Waiting || s.Phase == Countdown) {
 		s.Members[member].Ready = !s.Members[member].Ready
@@ -274,8 +286,9 @@ func (r *Room) run(ctx context.Context, seed int64) {
 				}
 				emit()
 			}
-		case now := <-ticker.C:
-			a.tick(now)
+		case <-ticker.C:
+			// A buffered ticker timestamp can predate an input just processed.
+			a.tick(time.Now())
 			emit()
 		}
 	}
@@ -445,13 +458,20 @@ func (h *Hub) List() []Snapshot {
 }
 func (h *Hub) Close() {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.cancel()
-	rooms := make([]*Room, 0, len(h.rooms))
+	// Actors do not acquire the hub lock. Keep it until they stop so concurrent
+	// Close calls and late session cleanup cannot observe a partial shutdown.
 	for _, e := range h.rooms {
-		rooms = append(rooms, e.room)
+		<-e.room.done
 	}
-	h.mu.Unlock()
-	for _, r := range rooms {
-		<-r.done
+	for _, s := range h.sessions {
+		s.room = nil
+		select {
+		case <-s.Frames:
+		default:
+		}
 	}
+	clear(h.sessions)
+	clear(h.rooms)
 }

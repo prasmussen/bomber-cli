@@ -37,6 +37,11 @@ Linux/arm64 engine. No public deployment was performed.
 | Persistent restrictive host key, pending-connection limit, handshake timeout | `TestHostKeyPersistencePermissionsAndLimits`; Docker restart check |
 | Bounded, nonblocking resizes, including before shell startup | `TestResizeBeforeShellAndFlood` |
 | Channel-only disconnect cleanup | `TestChannelCloseDisconnectsPlayer` |
+| Concurrent host-key creation, partial-write recovery, preservation of invalid existing files | `TestHostKeyConcurrentCreation`, `TestHostKeyWriteFailure` (macOS/Linux), `TestHostKeyFailurePreservesExistingFiles` |
+| 80 SSH sessions in five waves of 16; input/resize floods; slot, room, goroutine and retained-heap recovery | `TestSSHConnectionChurn`; warm-up followed by post-GC heap bound of 8 MiB and goroutine allowance of two |
+| Stalled SSH writes isolate the other player; shutdown during an active match and pending handshake | `TestSSHShutdownWithSlowClientAndActiveMatch` |
+| Repeated handshake exhaustion, slot reuse, concurrent shutdown | `TestSSHHandshakeChurnAndShutdown` |
+| Closed hubs release room/session references and tolerate late disconnects | `TestCloseReleasesRoomsAndSessions` |
 | Defaults and invalid configuration | `host.DefaultConfig`, CLI flags, `TestInvalidConfigAndHostKey` |
 | Event logging and graceful termination | Manual server logs, integration cleanup, SIGTERM and Docker stop exit 0 |
 | Runnable executable, Docker image, Linux systemd example, port/key documentation | `bin/bomber-cli`, `Dockerfile`, `deploy/bomber-cli.service`, `README.md` |
@@ -64,3 +69,22 @@ containers and volumes were removed; the `bomber-cli:local` image remains.
 
 The systemd unit is supplied as a Linux hosting example. It was inspected but
 not installed into a running systemd host in this macOS environment.
+
+## Lifecycle regression pass
+
+The new lifecycle tests exposed a shutdown leak when cancellation left queued
+SSH requests undrained, and retained room/session references after hub shutdown.
+Both are fixed. Host-key creation now publishes a fully written, synced temporary
+file atomically without replacing an existing key; failed writes leave no key
+at the destination and allow a retry.
+
+`./scripts/dev.sh stress` repeats the new lifecycle tests ten times under the
+race detector, using temporary files and ephemeral loopback listeners. The heap
+check measures retained Go heap after garbage collection, not peak memory or RSS.
+The slow-client case blocks writes on a real SSH transport deterministically;
+it does not depend on filling an operating-system socket buffer.
+
+On 2026-09-05, the full fresh race suite, vet, and build passed on macOS/arm64.
+The stress command passed all ten repetitions (800 churn sessions); the host
+tests also cross-compiled for Linux/amd64. The new Linux tests were not executed
+in this pass.

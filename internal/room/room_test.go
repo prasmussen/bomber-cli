@@ -2,6 +2,7 @@ package room
 
 import (
 	"bomber-cli/internal/game"
+	"fmt"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -10,6 +11,48 @@ import (
 
 func newActor() *actor {
 	return &actor{snapshot: Snapshot{ID: 1, Phase: Waiting}, subscribers: make(map[uint64]chan Snapshot), seed: 42}
+}
+
+func TestCommandResolvesExpiredTimers(t *testing.T) {
+	for _, action := range []Action{Right, Bomb} {
+		t.Run(fmt.Sprint(action), func(t *testing.T) {
+			a := newActor()
+			a.membership(member(1))
+			a.membership(member(2))
+			now := time.Unix(1000, 0)
+			a.snapshot.Phase = Playing
+			a.match = game.New([]uint64{1, 2}, now, 42)
+			a.match.Place(1, now)
+			a.command(command{1, action}, now.Add(2*time.Second))
+			if a.match.Players[0].Alive || a.match.Players[0].Pos != game.Spawns[0] || a.match.BombCount != 0 {
+				t.Fatal("input ran before overdue explosion")
+			}
+			if a.snapshot.Phase != Result || a.snapshot.Members[1].Score != 1 {
+				t.Fatal("overdue explosion did not finish round")
+			}
+		})
+	}
+	a := newActor()
+	a.membership(member(1))
+	a.membership(member(2))
+	now := time.Unix(1000, 0)
+	a.snapshot.Phase = Playing
+	a.match = game.New([]uint64{1, 2}, now, 42)
+	a.command(command{1, Bomb}, now.Add(3*time.Minute))
+	if a.match.BombCount != 0 || a.snapshot.Phase != Result || a.match.Winner != 0 {
+		t.Fatal("action accepted after round deadline")
+	}
+}
+
+func TestInvalidCommandsDoNotChangeMembership(t *testing.T) {
+	a := newActor()
+	a.membership(member(1))
+	before := a.snapshot
+	for _, c := range []command{{0, Ready}, {2, Ready}, {1, Action(255)}} {
+		if a.command(c, time.Now()) || a.snapshot != before {
+			t.Fatalf("invalid command changed room: %+v", c)
+		}
+	}
 }
 func member(id uint64) control {
 	return control{member: Member{ID: id, Name: "player"}, frames: make(chan Snapshot, 1)}
@@ -243,4 +286,43 @@ func TestInputPublishesWithoutWaitingForTick(t *testing.T) {
 			t.Fatal("updated snapshot was not published immediately")
 		}
 	})
+}
+
+func TestCloseReleasesRoomsAndSessions(t *testing.T) {
+	h := New(16, 4)
+	var players []*Session
+	var rooms []*Room
+	for i := range 16 {
+		s, err := h.Connect(fmt.Sprint(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := h.Join(s, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		players = append(players, s)
+		rooms = append(rooms, r)
+	}
+	h.Close()
+	if len(h.List()) != 0 || len(h.sessions) != 0 {
+		t.Fatal("closed hub retains rooms or sessions")
+	}
+	for i, s := range players {
+		select {
+		case <-rooms[i].done:
+		default:
+			t.Fatal("room still running")
+		}
+		if s.room != nil || len(s.Frames) != 0 {
+			t.Fatal("closed session retains room or snapshot")
+		}
+		// Session handlers can finish after the hub has shut down.
+		h.Leave(s)
+		h.Disconnect(s)
+	}
+	h.Close()
+	if _, err := h.Connect("late"); err == nil {
+		t.Fatal("closed hub accepted session")
+	}
 }

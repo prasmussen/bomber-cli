@@ -57,7 +57,12 @@ type connection struct {
 
 func (c *connection) Close() error {
 	err := c.Conn.Close()
-	c.once.Do(func() { c.host.mu.Lock(); delete(c.host.conns, c); c.host.mu.Unlock() })
+	c.once.Do(func() {
+		c.host.mu.Lock()
+		defer c.host.mu.Unlock()
+		c.timer.Stop()
+		delete(c.host.conns, c)
+	})
 	return err
 }
 func hostKey(path string) ([]byte, error) {
@@ -84,10 +89,13 @@ func hostKey(path string) ([]byte, error) {
 		return nil, err
 	}
 	data := pem.EncodeToMemory(block)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	// Publish only a fully written key. Linking the temporary file is atomic and
+	// never replaces a key published by another starting server.
+	f, err := os.CreateTemp(filepath.Dir(path), ".host-key-*")
 	if err != nil {
 		return nil, err
 	}
+	defer os.Remove(f.Name())
 	_, err = f.Write(data)
 	if err == nil {
 		err = f.Sync()
@@ -98,6 +106,12 @@ func hostKey(path string) ([]byte, error) {
 	}
 	if closeErr != nil {
 		return nil, closeErr
+	}
+	if err := os.Link(f.Name(), path); err != nil {
+		if os.IsExist(err) {
+			return hostKey(path)
+		}
+		return nil, err
 	}
 	return data, nil
 }
@@ -132,6 +146,9 @@ func New(cfg Config) (*Host, error) {
 		return wrapped
 	}
 	server.PtyCallback = func(ctx ssh.Context, pty ssh.Pty) bool {
+		if !validWindow(pty.Window.Width, pty.Window.Height) {
+			return false
+		}
 		ctx.Value(connKey{}).(*connection).hasPTY.Store(true)
 		return true
 	}
@@ -200,6 +217,36 @@ type filteredChannel struct {
 	ctx context.Context
 }
 
+// Bound client-controlled dimensions before they reach the terminal renderer.
+func validWindow(width, height int) bool {
+	return width >= 0 && height >= 0 && width <= 10000 && height <= 10000
+}
+
+func validPTY(payload []byte) bool {
+	var p struct {
+		Term                                     string
+		Width, Height, WidthPixels, HeightPixels uint32
+		Modes                                    string
+	}
+	if gossh.Unmarshal(payload, &p) != nil || len(p.Term) > 256 || p.Width > 10000 || p.Height > 10000 {
+		return false
+	}
+	// The dependency's parser ignores the encoded modes' declared length.
+	// Validate the envelope and mode arguments before handing it the request.
+	for modes := []byte(p.Modes); len(modes) > 0; {
+		opcode := modes[0]
+		modes = modes[1:]
+		if opcode == 0 || opcode >= 160 {
+			return true
+		}
+		if len(modes) < 4 {
+			return false
+		}
+		modes = modes[4:]
+	}
+	return len(p.Modes) == 0
+}
+
 func (f filteredChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) {
 	ch, requests, err := f.NewChannel.Accept()
 	if err != nil {
@@ -209,7 +256,14 @@ func (f filteredChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) 
 	go func() {
 		// This endpoint allows one channel per connection. Closing that channel
 		// must also cancel the connection context used by Bubble Tea.
-		defer f.ctx.Value(connKey{}).(*connection).Close()
+		defer func() {
+			_ = f.ctx.Value(connKey{}).(*connection).Close()
+			// The SSH mux can be blocked delivering requests already buffered
+			// when the context is canceled. Drain them after closing the socket
+			// so the mux can observe EOF and release the connection goroutines.
+			for range requests {
+			}
+		}()
 		defer close(out)
 		for {
 			select {
@@ -229,7 +283,7 @@ func (f filteredChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) 
 						continue
 					}
 					w := ssh.Window{Width: int(binary.BigEndian.Uint32(r.Payload[:4])), Height: int(binary.BigEndian.Uint32(r.Payload[4:8]))}
-					if w.Width > 10000 || w.Height > 10000 {
+					if !validWindow(w.Width, w.Height) {
 						_ = r.Reply(false, nil)
 						continue
 					}
@@ -246,7 +300,11 @@ func (f filteredChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) 
 						}
 					}
 					_ = r.Reply(true, nil)
-				case "pty-req", "shell", "exec", "subsystem":
+				case "pty-req", "shell":
+					if r.Type == "pty-req" && !validPTY(r.Payload) || r.Type == "shell" && len(r.Payload) != 0 {
+						_ = r.Reply(false, nil)
+						continue
+					}
 					select {
 					case out <- r:
 					case <-f.ctx.Done():
