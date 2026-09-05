@@ -7,6 +7,22 @@ Two to four players share a room; anyone can join without an account or password
 
 https://github.com/user-attachments/assets/c786a28f-1aaa-4017-92f4-2a95f1b222ca
 
+## Download
+
+Prebuilt binaries are available on the
+[GitHub releases page](https://github.com/prasmussen/bomber-cli/releases).
+Download the archive for your platform, extract it, and run `./bomber-cli` from
+the extracted directory.
+
+On macOS, Apple may block the binary because it is not Developer ID signed or
+notarized. If you trust the downloaded binary, remove its quarantine attribute
+and run it:
+
+```sh
+xattr -d com.apple.quarantine ./bomber-cli
+./bomber-cli
+```
+
 ## Build and run
 
 Requires Go **1.27.1**. Dependencies are pinned in `go.mod` and `go.sum`.
