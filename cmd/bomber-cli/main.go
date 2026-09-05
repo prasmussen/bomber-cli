@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -16,8 +17,16 @@ import (
 	"bomber-cli/internal/host"
 )
 
+const version = "1.0.0"
+
 func main() {
-	if err := run(parseConfig()); err != nil {
+	showVersion := flag.Bool("version", false, "print version and exit")
+	cfg := parseConfig()
+	if *showVersion {
+		fmt.Println("bomber-cli", version)
+		return
+	}
+	if err := run(cfg); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}

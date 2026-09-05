@@ -1,0 +1,48 @@
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Set artifact name
+        id: artifact
+        run: |
+          version=$(sed -nE 's/^const version = "([0-9A-Za-z.+-]+)"$/\1/p' cmd/bomber-cli/main.go)
+          test -n "$version"
+          echo "name=bomber-cli-${version}-${GOOS}-${GOARCH}" >> "$GITHUB_OUTPUT"
+      - name: Build binary
+        run: go build -trimpath -o dist/bomber-cli ./cmd/bomber-cli
+      - name: Package binary
+        env:
+          ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
+        run: tar -czf "$ARTIFACT_NAME.tar.gz" -C dist bomber-cli
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ steps.artifact.outputs.name }}.tar.gz
+          if-no-files-found: error
