@@ -169,6 +169,35 @@ Untracked SSH clients are disconnected when their managed server is stopped.
 
 ## Verification and architecture
 
+For a production-capacity load test with Docker running:
+
+The [recorded 128-player test](LOAD_TEST.md) includes measured latency, CPU,
+memory, rejection, and reconnection results.
+
+```sh
+python3 scripts/loadtest.py
+```
+
+This builds the current server and a separate SSH client generator, then starts
+an isolated container with two CPUs, 512 MiB RAM (no swap), 256 tasks, and 1024
+open files. No host ports are published. The generator shares its network
+namespace but has its own CPU/memory allocation, and uses eight loopback source
+IPs so the production 16-connections-per-IP policy remains enabled.
+
+The test fills 32 rooms with 128 players, checks rejection of 16 excess clients,
+and moves all players every 150 ms for two minutes. It measures actual
+keypress-to-changed-arena-output latency on one player per room. It then tests
+bomb explosions, results, rematches, complete disconnection, and a second wave
+of 128 players. Cgroup CPU/memory/OOM counters and server RSS are sampled about
+once per second. The cgroup memory peak also captures allocations between samples;
+resource sampling adds a small `docker exec` process to the server cgroup.
+
+Raw events, resource samples, server logs, and container settings are saved under
+`.local-test/loadtest/<UTC timestamp>/`. The script removes only its own uniquely
+named containers afterward. `--duration 30s` shortens the movement phase for a
+smoke run; `--skip-build` reuses the previous load-test image and client binary.
+Loopback latency excludes Internet delays and terminal-emulator drawing time.
+
 ```sh
 golangci-lint run ./...
 go test -race ./...
