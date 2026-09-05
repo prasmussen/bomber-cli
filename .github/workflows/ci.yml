@@ -3,6 +3,9 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,3 +24,4 @@ jobs:
           version: v2.13.2
       - run: go test -race -count=1 ./...
       - run: go build ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...

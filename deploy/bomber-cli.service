@@ -23,6 +23,11 @@ ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 UMask=0077
+MemoryHigh=384M
+MemoryMax=512M
+TasksMax=256
+LimitNOFILE=1024
+CPUQuota=200%
 
 [Install]
 WantedBy=multi-user.target

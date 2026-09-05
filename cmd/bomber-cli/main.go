@@ -29,6 +29,8 @@ func parseConfig() host.Config {
 	flag.StringVar(&cfg.HostKey, "host-key", cfg.HostKey, "persistent Ed25519 SSH host key")
 	flag.IntVar(&cfg.MaxSessions, "max-sessions", cfg.MaxSessions, "maximum connected sessions")
 	flag.IntVar(&cfg.MaxRooms, "max-rooms", cfg.MaxRooms, "maximum rooms")
+	flag.IntVar(&cfg.MaxSessionsPerIP, "max-sessions-per-ip", cfg.MaxSessionsPerIP, "maximum connections per source IP (shared by players behind NAT)")
+	flag.DurationVar(&cfg.IdleTimeout, "idle-timeout", cfg.IdleTimeout, "disconnect after no terminal input")
 	flag.Parse()
 	return cfg
 }

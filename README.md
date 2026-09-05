@@ -27,6 +27,8 @@ failed writes remove the temporary file so startup can be retried.
 --host-key      ./data/ssh_host_ed25519_key
 --max-sessions  128
 --max-rooms     32
+--max-sessions-per-ip  16
+--idle-timeout  10m
 ```
 
 Use a terminal of at least **60 columns by 24 rows**. The game uses ASCII symbols
@@ -74,6 +76,29 @@ Initial PTY requests and resizes are bounded to 10,000 columns/rows; malformed
 PTY, resize, and shell requests are rejected. Closing a connection cancels its
 pending handshake timer.
 
+Public-server defaults also enforce:
+
+- New connections share a server-wide admission budget of 20 per second with
+  a burst of 128, checked before SSH key exchange.
+- At most 16 connections per source IP, including pending handshakes. This
+  allowance is shared by players behind the same NAT; adjust
+  `--max-sessions-per-ip` for your audience.
+- Disconnect after ten minutes without terminal input (`--idle-timeout`). SSH
+  keepalives and server output do not extend this timeout. Connections have an
+  absolute four-hour lifetime; players can reconnect afterward.
+- Incoming transport traffic is limited to 64 KiB/s with a 256 KiB burst per
+  connection. Terminal input is limited to 1 KiB/s with an 8 KiB burst. Exceeding
+  either budget closes the connection. Network writes time out after 15 seconds.
+- Bracketed paste is disabled, and clients sending its opening marker are
+  disconnected. The terminal parser receives short, bounded text chunks to
+  prevent unbounded accumulation of continuous printable input.
+
+These are application limits, not protection against a distributed network or
+connection flood. Apply connection-rate filtering at the public firewall or
+provider edge, and keep administrative SSH on a separate port. The per-IP limit
+uses the immediate TCP peer, so a TCP proxy would share that allowance across
+its clients. Usernames are display names, not authenticated identities.
+
 Usernames become bounded ASCII display names; duplicates get numeric suffixes.
 Internal player IDs are independent of those names. Rooms and scores live only
 in memory. Empty rooms are removed. There are no accounts, database, chat, bots,
@@ -86,6 +111,9 @@ SIGTERM close connections, stop room goroutines, and shut down the listener.
 docker build -t bomber-cli .
 docker volume create bomber-data
 docker run --rm --name bomber-cli -p 2323:2323 \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --memory 512m --cpus 2 --pids-limit 256 --ulimit nofile=1024:1024 \
+  --log-opt max-size=10m --log-opt max-file=3 \
   -v bomber-data:/data bomber-cli
 ```
 
@@ -107,7 +135,12 @@ Build the binary on Linux, or cross-compile with
 `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/bomber-cli ./cmd/bomber-cli`
 (use `arm64` for an ARM host). The unit uses a dynamic unprivileged user and a
 persistent `/var/lib/bomber-cli` state directory for the host key. Open TCP 2323
-in the host firewall. Public deployment is outside this repository's scope.
+in the host firewall. The unit caps memory at 512 MiB (384 MiB soft threshold),
+CPU at two cores, tasks at 256, and open files at 1024. The Docker example applies
+similar limits and bounds container log retention. Tune these against measured
+load before increasing the connection count; memory exhaustion can restart the
+service and discard active matches. Keep the state directory writable only by
+the service user and configure journal retention on the host.
 
 ## Local development scripts
 
@@ -140,8 +173,14 @@ Untracked SSH clients are disconnected when their managed server is stopped.
 golangci-lint run ./...
 go test -race ./...
 go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 go build -o bin/bomber-cli ./cmd/bomber-cli
 ```
+
+CI runs the vulnerability scanner on pushes, pull requests, and a weekly
+schedule, so new advisories can be detected without a code change. The security
+pass found no reachable known vulnerabilities; the module-only OpenPGP advisory
+GO-2026-5932 concerns a package this application does not import.
 
 Tests cover deterministic rules, map connectivity/safety, power-up probabilities,
 room lifecycle, queue bounds, and slow-client isolation. Integration tests start

@@ -26,19 +26,23 @@ type Config struct {
 	Listen, HostKey       string
 	MaxSessions, MaxRooms int
 	HandshakeTimeout      time.Duration
+	IdleTimeout           time.Duration
+	MaxSessionsPerIP      int
 }
 
 func DefaultConfig() Config {
-	return Config{Listen: ":2323", HostKey: "./data/ssh_host_ed25519_key", MaxSessions: 128, MaxRooms: 32, HandshakeTimeout: 10 * time.Second}
+	return Config{Listen: ":2323", HostKey: "./data/ssh_host_ed25519_key", MaxSessions: 128, MaxRooms: 32, HandshakeTimeout: 10 * time.Second, IdleTimeout: 10 * time.Minute, MaxSessionsPerIP: 16}
 }
 
 type Host struct {
-	Server   *ssh.Server
-	Hub      *room.Hub
-	mu       sync.Mutex
-	conns    map[*connection]struct{}
-	stopping bool
-	limit    int
+	Server    *ssh.Server
+	Hub       *room.Hub
+	mu        sync.Mutex
+	conns     map[*connection]struct{}
+	stopping  bool
+	limit     int
+	perIP     int
+	admission byteBudget
 }
 
 type connKey struct{}
@@ -51,6 +55,8 @@ type connection struct {
 	channel atomic.Bool
 	hasPTY  atomic.Bool
 	windows chan ssh.Window
+	ip      string
+	ingress byteBudget
 }
 
 func (c *connection) Close() error {
@@ -71,22 +77,31 @@ func New(cfg Config) (*Host, error) {
 	if cfg.HandshakeTimeout <= 0 {
 		cfg.HandshakeTimeout = 10 * time.Second
 	}
+	if cfg.IdleTimeout < 0 || cfg.MaxSessionsPerIP < 0 {
+		return nil, errors.New("idle timeout and per-IP limit must not be negative")
+	}
+	if cfg.IdleTimeout == 0 {
+		cfg.IdleTimeout = 10 * time.Minute
+	}
+	if cfg.MaxSessionsPerIP == 0 {
+		cfg.MaxSessionsPerIP = 16
+	}
 	key, err := hostKey(cfg.HostKey)
 	if err != nil {
 		return nil, fmt.Errorf("host key: %w", err)
 	}
-	h := &Host{Hub: room.New(cfg.MaxSessions, cfg.MaxRooms), conns: make(map[*connection]struct{}), limit: cfg.MaxSessions}
+	h := &Host{Hub: room.New(cfg.MaxSessions, cfg.MaxRooms), conns: make(map[*connection]struct{}), limit: cfg.MaxSessions, perIP: cfg.MaxSessionsPerIP, admission: newByteBudget(20, 128)}
 	server, err := wish.NewServer(wish.WithAddress(cfg.Listen), wish.WithHostKeyPEM(key))
 	if err != nil {
 		h.Hub.Close()
 		return nil, err
 	}
 	h.Server = server
-	h.configureSSH(cfg.HandshakeTimeout)
+	h.configureSSH(cfg.HandshakeTimeout, cfg.IdleTimeout)
 	return h, nil
 }
 
-func (h *Host) configureSSH(handshakeTimeout time.Duration) {
+func (h *Host) configureSSH(handshakeTimeout, idleTimeout time.Duration) {
 	h.Server.ConnCallback = func(ctx ssh.Context, conn net.Conn) net.Conn {
 		return h.acceptConnection(ctx, conn, handshakeTimeout)
 	}
@@ -96,7 +111,8 @@ func (h *Host) configureSSH(handshakeTimeout time.Duration) {
 	// Empty maps explicitly disable forwarding and subsystems, including SFTP.
 	h.Server.RequestHandlers = map[string]ssh.RequestHandler{}
 	h.Server.SubsystemHandlers = map[string]ssh.SubsystemHandler{}
-	h.Server.Handler = h.runGameSession
+	h.Server.MaxTimeout = 4 * time.Hour
+	h.Server.Handler = func(s ssh.Session) { h.runGameSession(s, idleTimeout) }
 }
 
 func (h *Host) acceptConnection(ctx ssh.Context, c net.Conn, handshakeTimeout time.Duration) net.Conn {
@@ -105,7 +121,24 @@ func (h *Host) acceptConnection(ctx ssh.Context, c net.Conn, handshakeTimeout ti
 	if h.stopping || len(h.conns) >= h.limit {
 		return nil
 	}
-	wrapped := &connection{Conn: c, host: h, windows: make(chan ssh.Window, 1)}
+	ip, _, err := net.SplitHostPort(c.RemoteAddr().String())
+	if err != nil {
+		return nil
+	}
+	if parsed := net.ParseIP(ip); parsed != nil {
+		ip = parsed.String()
+	}
+	count := 0
+	for existing := range h.conns {
+		if existing.ip == ip {
+			count++
+		}
+	}
+	if count >= h.perIP || !h.admission.allow(1) {
+		return nil
+	}
+	wrapped := &connection{Conn: c, host: h, windows: make(chan ssh.Window, 1), ip: ip,
+		ingress: newByteBudget(64*1024, 256*1024)}
 	h.conns[wrapped] = struct{}{}
 	wrapped.timer = time.AfterFunc(handshakeTimeout, func() { _ = wrapped.Close() })
 	ctx.SetValue(connKey{}, wrapped)
@@ -138,7 +171,7 @@ func handleSessionChannel(srv *ssh.Server, conn *gossh.ServerConn, ch gossh.NewC
 	ssh.DefaultSessionHandler(srv, conn, filteredChannel{NewChannel: ch, ctx: ctx}, ctx)
 }
 
-func (h *Host) runGameSession(s ssh.Session) {
+func (h *Host) runGameSession(s ssh.Session, idleTimeout time.Duration) {
 	player, err := h.Hub.Connect(s.User())
 	if err != nil {
 		_, _ = fmt.Fprintln(s, err)
@@ -147,10 +180,14 @@ func (h *Host) runGameSession(s ssh.Session) {
 	}
 	defer h.Hub.Disconnect(player)
 	pty, _, _ := s.Pty()
-	windows := s.Context().Value(connKey{}).(*connection).windows
+	c := s.Context().Value(connKey{}).(*connection)
+	windows := c.windows
+	idle := time.AfterFunc(idleTimeout, func() { _ = c.Close() })
+	defer idle.Stop()
 	ctx, cancel := context.WithCancel(s.Context())
 	defer cancel()
-	opts := append(wishtea.MakeOptions(s), tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFPS(60))
+	opts := append(wishtea.MakeOptions(s), tea.WithAltScreen(), tea.WithContext(ctx), tea.WithFPS(60),
+		tea.WithoutBracketedPaste(), tea.WithInput(&gameInput{Reader: s, connection: c, idle: idle, idleTimeout: idleTimeout, budget: newByteBudget(1024, 8192)}))
 	program := tea.NewProgram(ui.New(h.Hub, player, pty.Window.Width, pty.Window.Height, pty.Term != "dumb"), opts...)
 	go forwardSessionUpdates(ctx, program, player.Frames, windows, pty.Window)
 	if _, err = program.Run(); err != nil && !errors.Is(err, tea.ErrProgramKilled) {
