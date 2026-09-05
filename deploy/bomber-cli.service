@@ -1,0 +1,28 @@
+[Unit]
+Description=Bomberman over SSH
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=bomber-cli
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/bomber-cli
+ExecStart=/usr/local/bin/bomber-cli --listen :2323 --host-key /var/lib/bomber-cli/ssh_host_ed25519_key --max-sessions 128 --max-rooms 32
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
